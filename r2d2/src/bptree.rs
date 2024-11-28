@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::path::Component::ParentDir;
+use std::sync::Arc;
 use bson;
 use bson::Bson;
 
@@ -8,7 +10,7 @@ pub struct LeafNode {
     keys: Vec<u128>,
     values: Vec<bson::Document>,
     // next_leaf may be null, need option
-    next_leaf: Option<Box<LeafNode>>
+    next_leaf: Option<Arc<RefCell<LeafNode>>>
 }
 
 impl LeafNode {
@@ -116,9 +118,27 @@ impl LeafNode {
     // TODO: Set next
 }
 
+// ChildNodeType can be either InternalNode or LeafNode.
+pub struct InternalNode {
+    min_size: usize,
+    max_size: usize,
+    keys: Vec<u128>,
+    // Vector of pointers to leaf nodes, or
+    pointers: Vec<Arc<RefCell<InternalNode>>>
+}
 
-pub struct BPTree {
-    root: LeafNode,
+impl InternalNode {
+    // TODO: new
+    // TODO: print
+    // TODO: insert
+    // TODO: remove
+    // TODO: find
+    // TODO:
+}
+
+pub struct BPlusTree {
+    // Mutable, atomic, shared pointer to a single internal node.
+    root: Arc<RefCell<InternalNode>>,
     // Keys per node.
     fan_out: usize,
     // Details for each column.
@@ -126,7 +146,7 @@ pub struct BPTree {
     schema: bson::Document,
 }
 
-impl BPTree {
+impl BPlusTree {
     // TODO: new
     // TODO: insert key-value pair (includes split-and-push)
     // TODO: delete key-value pair (includes combine-and-pull)
