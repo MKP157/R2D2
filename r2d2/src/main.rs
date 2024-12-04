@@ -16,7 +16,7 @@ fn handle_client(mut stream: TcpStream) {
 }
 
 
-fn handle_request(_db: &Database, _req: String) -> Vec<u8> {
+fn handle_request(_db: &mut Database, _req: String) -> Vec<u8> {
     // Query database and fetch result
     let result : Document = _db.query(_req.clone());
 
@@ -44,7 +44,7 @@ fn handle_request(_db: &Database, _req: String) -> Vec<u8> {
                 .collect::<Vec<String>>()
         );
 
-        if _req.as_str().contains("LIST") {
+        if _req.as_str().contains("LIST") || _req.as_str().contains("INSERT") {
             header_str.insert(0, String::from("Timestamp"));
         }
 
@@ -133,25 +133,25 @@ fn main() -> std::io::Result<()> {
         vec![String::from("string"), String::from("number"), String::from("bool")]
     );
 
-    database.insert(5, doc![
+    database.insert_to_database(5, doc![
         "Name" : "Matthew",
         "Cost" : 100,
         "Member" : false,
     ]);
 
-    database.insert(7, doc![
+    database.insert_to_database(7, doc![
         "Name" : "Aiden",
         "Cost" : 65,
         "Member" : false,
     ]);
 
-    database.insert(1, doc![
+    database.insert_to_database(1, doc![
         "Name" : "Kim",
         "Cost" : 200,
         "Member" : true,
     ]);
 
-    database.insert(35, doc![
+    database.insert_to_database(35, doc![
         "Name" : "Bob",
         "Cost": 50,
         "Member" : true,
@@ -190,7 +190,7 @@ fn main() -> std::io::Result<()> {
             print!("{l}");
         }
 
-        let response = handle_request(&database, requested_resource);
+        let response = handle_request(&mut database, requested_resource);
         stream.write(&response).expect("TODO: panic message");
     }
     Ok(())

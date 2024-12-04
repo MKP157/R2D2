@@ -13,13 +13,14 @@ LIST
         ::TIMESTAMP,TIMESTAMP
     ::METADATA
 
-AGGREGATE::FIELD_NAME
-    ::SUM
-    ::AVG
-    ::MIN
-    ::MAX
+AGGREGATE
+    ::FIELD_NAME
+        ::SUM
+        ::AVG
+        ::MIN
+        ::MAX
 
 INSERT
-    ::FIELDS?FIELD1=VALUE1,FIELD2=VALUE2,...
-
+    ::FIELD1=VALUE1,FIELD2=VALUE2,...
+    [::TIMESTAMP=...]
 

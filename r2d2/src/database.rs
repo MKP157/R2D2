@@ -1,7 +1,8 @@
+use std::time::{SystemTime, UNIX_EPOCH};
 use bplustree::GenericBPlusTree;
-use bson::{doc, Document};
+use bson::{doc, Bson, Document};
 use bson::spec::ElementType;
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use chrono::format::ParseError;
 
 const FAN_OUT : usize = 10;
@@ -11,6 +12,15 @@ pub struct Database {
     schema: bson::Document,
     min_timestamp: u128,
     max_timestamp: u128,
+}
+
+fn type_string_to_bson_element (string: &str) -> Option<ElementType> {
+    match string {
+        "string" => Some(ElementType::String),
+        "number" => Some(ElementType::Double),
+        "boolean" => Some(ElementType::Boolean),
+        _ => { eprintln!("INVALID TYPE : {}", string); None }
+    }
 }
 
 impl Database {
@@ -31,7 +41,7 @@ impl Database {
         db
     }
 
-    pub fn insert(&mut self, key : u128, val : bson::Document) {
+    pub fn insert_to_database(&mut self, key : u128, val : bson::Document) {
         if self.min_timestamp > key {
             self.min_timestamp = key;
         }
@@ -40,19 +50,27 @@ impl Database {
             self.max_timestamp = key;
         }
 
-        let entry_keys = val.keys();
-        for key in entry_keys {
-            if !self.schema.contains_key(&key) {
-                eprintln!("Missing key {} in database schema! Must be one of:", key);
-                for k in self.schema.keys() {
-                    eprintln!("{}", k);
-                }
-
-                return;
-            }
+        let already_in_tree = self.bptree.lookup(&key, |value| value.clone()).is_some();
+        if already_in_tree {
+            self.insert_to_database(key+1, val);
         }
 
-        self.bptree.insert(key, val);
+        else {
+            let entry_keys = val.keys();
+            for key in entry_keys {
+                if !self.schema.contains_key(&key) {
+                    eprintln!("Missing key {} in database schema! Must be one of:", key);
+                    for k in self.schema.keys() {
+                        eprintln!("{}", k);
+                    }
+
+                    return;
+                }
+            }
+
+            self.bptree.insert(key, val);
+        }
+
     }
 
     pub fn remove(&mut self, key : u128) {
@@ -64,8 +82,9 @@ impl Database {
     //    "labels" : vec<strings>,
     //    "rows : Document...
     // }
-    pub fn query(&self, query_string : String) -> Document {
+    pub fn query(&mut self, query_string : String) -> Document {
 
+        // Split fields using :: delimiter.
         let options = query_string.trim().split("::").collect::<Vec<&str>>();
 
         match options[0] {
@@ -128,6 +147,53 @@ impl Database {
                         options[1] : result as i64,
                     ]
                 ]
+            }
+
+            // TODO: INSERT
+            "INSERT" => {
+                let key_value_pairs = options[1]
+                    .split(",")
+                    .collect::<Vec<&str>>();
+
+                let mut row_document = Document::new();
+
+                for pair in key_value_pairs {
+                    let (k, v) = pair.split_once("=").unwrap();
+
+                    // If the key exists, and the data is valid, insert to database.
+                    if self.schema.contains_key(k) {
+                        let bson_value = match self.schema.get_str(k).unwrap_or("string") {
+                            "bool" => Bson::Boolean(v.parse::<bool>().unwrap()),
+                            "number" => Bson::Double(v.parse::<f64>().unwrap()),
+                            "string" | _ => Bson::String(v.to_string()),
+                        };
+
+                        row_document.insert(k.to_string(), bson_value);
+                    }
+                }
+
+                let mut timestamp= SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+
+                if options.len() > 2 {
+                    let t =
+                        options[2].split("=")
+                            .last()
+                            .unwrap()
+                            .parse::<String>()
+                            .unwrap()
+                            .parse::<u128>();
+
+                    if t.is_ok() {
+                        timestamp = t.unwrap();
+                    }
+                }
+
+                if row_document.len() > 0 {
+                    self.insert_to_database(timestamp, row_document);
+                }
+
+                // After inserting, list all.
+                return self.query("LIST::ALL".to_string());
             }
 
             "TIME" | _ => {
@@ -228,5 +294,4 @@ impl Database {
 
         result
     }
-
 }
