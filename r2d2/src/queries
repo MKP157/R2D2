@@ -1,0 +1,22 @@
+Queries formatted as get requests.
+
+127.0.0.1/<operation>[.<category>].<options>
+
+operations:
+TIME::<ISO time>
+
+LIST
+    ::ALL
+    ::RANGE
+        ::TIMESTAMP,TIMESTAMP
+    ::METADATA
+
+AGGREGATE::FIELD_NAME
+    ::SUM
+    ::AVG
+    ::MIN
+    ::MAX
+
+INSERT
+    ::FIELDS?FIELD1=VALUE1,FIELD2=VALUE2,...
+

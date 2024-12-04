@@ -1,110 +1,114 @@
-use bson::{Bson, Document};
+mod database;
+use http::{response, Request, Response, StatusCode, Version};
+use std::io::{BufRead, Read, Write};
+use std::net::{TcpListener, TcpStream};
+use bson::{doc, Document};
+use crate::database::Database;
 
-mod bptree;
+fn handle_client(mut stream: TcpStream) {
+    println!("Connection from {}", stream.peer_addr().unwrap());
+    let buf = &mut [0; 512];
 
-fn leaf_node_tests () {
-    println!("LeafNode tests...");
-    println!("=================");
-
-    let max : usize = 3;
-
-    let mut test_node = bptree::LeafNode::new(max);
-
-    let mut test_docs : Vec<Document> = Vec::new();
-    test_docs.push(bson::doc! {
-        "name" : "Matthew",
-        "age" : 21,
-        "student" : true
-    });
-
-    test_docs.push(bson::doc! {
-        "name" : "Dr. Kim",
-        "age" : 40,
-        "student" : false
-    });
-
-    test_docs.push(bson::doc! {
-        "name" : "Aiden",
-        "age" : 21,
-        "student" : true
-    });
-
-    println!("\n\n======== INSERT TESTS ========");
-
-    let mut status : i32;
-
-    // Insert normal tests
-    status = test_node.insert(3,  test_docs[0].clone());
-    println!("Insert completed with status {}, result:", status);
-    test_node.print();
-    print!("\n\n");
-
-    status = test_node.insert(1,  test_docs[1].clone());
-    println!("Insert completed with status {}, result:", status);
-    test_node.print();
-    print!("\n\n");
-
-    // Insert with collision
-    status = test_node.insert(1,  test_docs[2].clone());
-    println!("Insert completed with status {}, result:", status);
-    test_node.print();
-    print!("\n\n");
-
-    status = test_node.insert(2,  test_docs[2].clone());
-    println!("Insert completed with status {}, result:", status);
-    test_node.print();
-    print!("\n\n");
-
-    // Insert on full:
-    status = test_node.insert(4,  test_docs[2].clone());
-    println!("Insert completed with status {}, result:", status);
-    test_node.print();
-    print!("\n\n");
-
-
-    // Removal tests
-    println!("\n\n======== REMOVE TESTS ========");
-    let mut retrieved : Option<(u128, bson::Document)>;
-
-
-    // Nonexistent key
-    (status, retrieved) = test_node.remove(5);
-    println!("Remove completed with status {}, result:", status);
-    test_node.print();
-    if retrieved.is_some() {
-        let (k, d) = retrieved.unwrap();
-        print!("\nReturned: {} : {}", k, d);
+    for line in stream.read(buf) {
+        println!("{:?}", buf.to_vec());
     }
-    print!("\n\n");
-
-    // Key exists
-    (status, retrieved) = test_node.remove(2);
-    test_node.print();
-    if retrieved.is_some() {
-        let (k, d) = retrieved.unwrap();
-        print!("\nReturned: {} : {}", k, d);
-    }
-    print!("\n\n");
-
-    // Less than half full
-    (status, retrieved) = test_node.remove(1);
-    test_node.print();
-    if retrieved.is_some() {
-        let (k, d) = retrieved.unwrap();
-        print!("\nReturned: {} : {}", k, d);
-    }
-    print!("\n\n");
-
-    (status, retrieved) = test_node.remove(3);
-    test_node.print();
-    if retrieved.is_some() {
-        let (k, d) = retrieved.unwrap();
-        print!("\nReturned: {} : {}", k, d);
-    }
-    print!("\n\n");
 }
 
 
-fn main() {
-    leaf_node_tests();
+fn handle_request(_db: &Database, _req: String) -> Vec<u8> {
+    // Query database and fetch result
+    let result : Document = _db.query(_req.clone());
+
+    let mut html : String = String::from(r#"
+        <!DOCTYPE html>
+        <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <link rel="icon" href="data:,">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>R2D2</title>
+            </head>
+            <body>
+                <h1>"#);
+
+    html.push_str(result.to_string().as_str());
+    html.push_str( r#"</h1>
+            </body>
+    "#);
+
+    html.push_str(&result.to_string());
+    html.push_str( r#"</html>"#);
+
+    let mut header = String::new();
+    header.push_str("HTTP/1.1 ");
+    header.push_str(&200.to_string());
+    header.push_str(" OK\r\n\r\n" );
+
+    let mut result:Vec<u8> = Vec::from(header.as_bytes());
+    result = [result, Vec::from(html.as_bytes())].concat();
+    
+    return result;
+}
+
+fn main() -> std::io::Result<()> {
+    let mut database = Database::new(
+        vec![String::from("Name"), String::from("Cost"), String::from("Member")],
+        vec![String::from("string"), String::from("number"), String::from("bool")]
+    );
+
+    database.insert(5, doc![
+        "Name" : "Matthew",
+        "Cost" : 100,
+        "Member" : false,
+    ]);
+
+    database.insert(7, doc![
+        "Name" : "Aiden",
+        "Cost" : 65,
+        "Member" : false,
+    ]);
+
+    database.insert(1, doc![
+        "Name" : "Kim",
+        "Cost" : 200,
+        "Member" : true,
+    ]);
+
+    let listener = TcpListener::bind("127.0.0.1:6969")?;
+
+    // accept connections and process them serially
+    for mut stream in listener.incoming().flatten() {
+        // Inside this loop, someone has connected.
+
+        // You can kind of think of this line of code as if it were
+        // a scanner in Java. That's basically what it's doing.
+        let mut rdr = std::io::BufReader::new(&mut stream);
+
+        /* [[[[[[[[[[[[[[ THE LISTEN LOOP ]]]]]]]]]]]]] */
+        // This loop will get every string that the listener
+        // hears, and print them to the terminal. If it hears
+        // an empty line, we break out of the loop.
+        let mut i = 0;
+        let mut requested_resource: String = String::new();
+
+        loop {
+            let mut l = String::new();
+            rdr.read_line(&mut l).unwrap();
+            if l.trim().is_empty() { break; }
+
+            if i == 0 {
+                i = 1;
+                requested_resource = l
+                    .split(" ").collect::<Vec<&str>>()[1].to_string()
+                    .split("/").collect::<Vec<&str>>()[1].to_string();
+                println!("REQUESTED RESOURCE:{}", requested_resource);
+            }
+
+            print!("{l}");
+        }
+
+        let response = handle_request(&database, requested_resource);
+        stream.write(&response).expect("TODO: panic message");
+    }
+    Ok(())
 }

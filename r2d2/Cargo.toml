@@ -1,7 +1,10 @@
 [package]
-name = "r2d2"
+name = "r2d2p2"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bplustree = "0.1.0"
 bson = "2.13.0"
+http = "1.2.0"
+chrono = "0.4.38"
