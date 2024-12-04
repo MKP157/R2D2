@@ -4,7 +4,19 @@ use std::io::{BufRead, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use bson::{doc, Document};
 use bson::spec::ElementType;
-use crate::database::Database;
+use crate::database::{Database, DATA_PATH};
+
+use std::{fs, io};
+use std::io::ErrorKind;
+
+fn create_dir(path: &str) -> Result<(), io::Error> {
+    match fs::create_dir_all(path) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 
 fn handle_client(mut stream: TcpStream) {
     println!("Connection from {}", stream.peer_addr().unwrap());
@@ -128,7 +140,17 @@ fn document_to_html_row(doc : Document, time : u128) -> String {
 }
 
 fn main() -> std::io::Result<()> {
+    if let Err(e) = create_dir(database::DATA_PATH) {
+        eprintln!("Error creating directory: {}", e);
+    } else {
+        println!("Directory created or already exists.");
+    }
     let mut database = Database::new(
+        vec![String::from("store"), String::from("product"), String::from("number_sold")],
+        vec![String::from("number"), String::from("number"), String::from("number")]
+    );
+
+    /*let mut database = Database::new(
         vec![String::from("Name"), String::from("Cost"), String::from("Member")],
         vec![String::from("string"), String::from("number"), String::from("bool")]
     );
@@ -155,7 +177,7 @@ fn main() -> std::io::Result<()> {
         "Name" : "Bob",
         "Cost": 50,
         "Member" : true,
-    ]);
+    ]);*/
 
     let listener = TcpListener::bind("127.0.0.1:6969")?;
 
@@ -184,10 +206,10 @@ fn main() -> std::io::Result<()> {
                 requested_resource = l
                     .split(" ").collect::<Vec<&str>>()[1].to_string()
                     .split("/").collect::<Vec<&str>>()[1].to_string();
-                println!("REQUESTED RESOURCE:{}", requested_resource);
+                // println!("REQUESTED RESOURCE: {}", requested_resource);
             }
 
-            print!("{l}");
+            //print!("{l}");
         }
 
         let response = handle_request(&mut database, requested_resource);

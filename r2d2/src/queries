@@ -12,6 +12,7 @@ LIST
     ::RANGE
         ::TIMESTAMP,TIMESTAMP
     ::METADATA
+    ::SAVED
 
 AGGREGATE
     ::FIELD_NAME
@@ -23,4 +24,19 @@ AGGREGATE
 INSERT
     ::FIELD1=VALUE1,FIELD2=VALUE2,...
     [::TIMESTAMP=...]
+
+REMOVE
+    ::ALL
+    ::ONE
+        ::TIME
+        ::FIELD=VALUE
+
+    ::MANY
+
+SAVE
+    [::NAME]
+
+LOAD
+    ::NAME
+
 

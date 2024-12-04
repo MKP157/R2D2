@@ -1,3 +1,4 @@
+use std::{fs, io};
 use std::time::{SystemTime, UNIX_EPOCH};
 use bplustree::GenericBPlusTree;
 use bson::{doc, Bson, Document};
@@ -5,7 +6,8 @@ use bson::spec::ElementType;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use chrono::format::ParseError;
 
-const FAN_OUT : usize = 10;
+pub const FAN_OUT : usize = 10;
+pub const DATA_PATH : &str = "data";
 
 pub struct Database {
     bptree: GenericBPlusTree<u128, bson::Document, FAN_OUT, FAN_OUT>,
@@ -51,6 +53,9 @@ impl Database {
         }
 
         let already_in_tree = self.bptree.lookup(&key, |value| value.clone()).is_some();
+
+        // If the key timestamp is already taken, the database will keep attempting
+        // inserts until it finds the closest available timestamp.
         if already_in_tree {
             self.insert_to_database(key+1, val);
         }
@@ -124,6 +129,19 @@ impl Database {
                         ]
                     }
 
+                    "SAVED" => {
+                        let file_list = list_files().unwrap_or(vec!["No saved databases found.".parse().unwrap()]);
+                        let mut file_list_doc = bson::Document::new();
+                        for (i, f) in file_list.iter().enumerate() {
+                            file_list_doc.insert(&i.to_string(), f.clone());
+                        }
+
+                        return doc![
+                            "labels" : ["Saved Databases"],
+                            "rows" : file_list_doc,
+                        ]
+                    }
+
                     // METADATA:
                     _ => {
                         doc![
@@ -149,7 +167,6 @@ impl Database {
                 ]
             }
 
-            // TODO: INSERT
             "INSERT" => {
                 let key_value_pairs = options[1]
                     .split(",")
@@ -195,6 +212,10 @@ impl Database {
                 // After inserting, list all.
                 return self.query("LIST::ALL".to_string());
             }
+
+            // TODO: REMOVE
+            // TODO: SAVE
+            // TODO: LOAD
 
             "TIME" | _ => {
                 println!("{}", options[1]);
@@ -265,7 +286,6 @@ impl Database {
                     _ => 0.0
                 };
 
-                // TODO: Fix aggregates
                 match operation.as_str() {
                     "MIN" => {
                         if converted < result {
@@ -294,4 +314,20 @@ impl Database {
 
         result
     }
+}
+
+
+fn list_files() -> Result<Vec<String>, io::Error> {
+    let paths = fs::read_dir(DATA_PATH)?;
+
+    let mut result = Vec::new();
+
+    for path in paths {
+        let path = path?;
+        let filename = path.file_name();
+        let filename_str = filename.to_str().unwrap_or("unknown");
+        result.push(String::from(filename_str));
+    }
+
+    Ok(result)
 }
