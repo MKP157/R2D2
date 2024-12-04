@@ -1,6 +1,8 @@
+
+
 Queries formatted as get requests.
 
-127.0.0.1/<operation>[.<category>].<options>
+127.0.0.1/<operation>[::<category>]::<options>
 
 operations:
 TIME::<ISO time>
@@ -19,4 +21,5 @@ AGGREGATE::FIELD_NAME
 
 INSERT
     ::FIELDS?FIELD1=VALUE1,FIELD2=VALUE2,...
+
 

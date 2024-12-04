@@ -1,5 +1,6 @@
 use bplustree::GenericBPlusTree;
 use bson::{doc, Document};
+use bson::spec::ElementType;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
 use chrono::format::ParseError;
 
@@ -64,6 +65,7 @@ impl Database {
     //    "rows : Document...
     // }
     pub fn query(&self, query_string : String) -> Document {
+
         let options = query_string.trim().split("::").collect::<Vec<&str>>();
 
         match options[0] {
@@ -106,9 +108,10 @@ impl Database {
                     // METADATA:
                     _ => {
                         doc![
-                            "labels" : ["size"],
+                            "labels" : ["size", "schema"],
                             "rows" : doc![
                                 "size" : self.bptree.len() as i64,
+                                "schema" : self.schema.clone(),
                             ]
                         ]
                     }
@@ -116,6 +119,7 @@ impl Database {
             }
 
             "AGGREGATE" => {
+                println!("{} {}", options[2], options[1]);
                 let result = self.aggregate(options[2].parse().unwrap(), options[1].parse().unwrap());
 
                 doc![
@@ -127,7 +131,9 @@ impl Database {
             }
 
             "TIME" | _ => {
-                let timestamp = NaiveDateTime::parse_from_str(options[1], "%Y-%m-%d %H:%M:%S")
+                println!("{}", options[1]);
+
+                let timestamp = NaiveDateTime::parse_from_str(&options[1].replace("%20", " "), "%Y-%m-%d %H:%M:%S")
                     .unwrap()
                     .and_utc()
                     .timestamp();
@@ -166,6 +172,11 @@ impl Database {
 
     pub fn aggregate(&self, operation: String, field_name: String) -> f64 {
         let mut result : f64 = 0.0;
+
+        if operation == "MIN" {
+            result = f64::MAX;
+        }
+
         let mut iter = self.bptree.raw_iter();
 
         // Put the cursor immediately at the given start index, or the next available spot.
@@ -174,25 +185,37 @@ impl Database {
 
         while cursor.is_some() {
             let (current_key, current_row) = cursor.unwrap();
+            let value = current_row.get(&field_name);
 
-            // TODO: Fix aggregates
-            match operation.as_str() {
-                "MIN" => {
-                    let temp = current_row.get(&field_name).unwrap().as_f64().unwrap();
-                    if temp < result {
-                        result = temp;
+            if value.is_some() {
+                let parsed_value = value.unwrap();
+                print!("{:?}", parsed_value);
+
+
+                let converted = match parsed_value.element_type() {
+                    ElementType::Double => parsed_value.as_f64().unwrap(),
+                    ElementType::Int32 => (parsed_value.as_i32().unwrap()) as f64,
+                    ElementType::Int64 => (parsed_value.as_i64().unwrap()) as f64,
+                    _ => 0.0
+                };
+
+                // TODO: Fix aggregates
+                match operation.as_str() {
+                    "MIN" => {
+                        if converted < result {
+                            result = converted;
+                        }
                     }
-                }
 
-                "MAX" => {
-                    let temp = current_row.get(&field_name).unwrap().as_f64().unwrap();
-                    if temp > result {
-                        result = temp;
+                    "MAX" => {
+                        if converted > result {
+                            result = converted;
+                        }
                     }
-                }
 
-                "SUM" | "AVG" | _ => {
-                    result += current_row.get(&field_name).unwrap().as_f64().unwrap();
+                    "SUM" | "AVG" | _ => {
+                        result += converted;
+                    }
                 }
             }
 

@@ -3,6 +3,7 @@ use http::{response, Request, Response, StatusCode, Version};
 use std::io::{BufRead, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use bson::{doc, Document};
+use bson::spec::ElementType;
 use crate::database::Database;
 
 fn handle_client(mut stream: TcpStream) {
@@ -31,13 +32,53 @@ fn handle_request(_db: &Database, _req: String) -> Vec<u8> {
             <body>
                 <h1>"#);
 
-    html.push_str(result.to_string().as_str());
-    html.push_str( r#"</h1>
-            </body>
-    "#);
+    html.push_str(_req.as_str());
+    html.push_str( r#"</h1></body><table>"#);
 
-    html.push_str(&result.to_string());
-    html.push_str( r#"</html>"#);
+    // Header
+    if let header = result.get_array("labels").unwrap() {
+        let mut header_str : Vec<String> = Vec::from(
+            header.iter()
+                .filter(|&s| s.element_type() == ElementType::String)
+                .map(|s| {String::from(s.as_str().unwrap())})
+                .collect::<Vec<String>>()
+        );
+
+        if _req.as_str().contains("LIST") {
+            header_str.insert(0, String::from("Timestamp"));
+        }
+
+        html.push_str(
+            &*vec_string_to_html_row(header_str, true)
+        );
+    }
+
+    // Contents
+    if let mut body = result.get_document("rows").unwrap() {
+        for (label, content) in body.iter() {
+            match content.element_type() {
+                ElementType::EmbeddedDocument => {
+                    html.push_str(
+                        &*document_to_html_row(
+                            content.as_document().unwrap().clone(),
+                            label.parse::<u128>().unwrap_or(0)
+                        )
+                    );
+                }
+
+                _ => {
+                    html.push_str(format!(
+                        "<tr><td>{}</td></tr>",
+                        content.to_string()
+                    ).as_str());
+                }
+            }
+
+
+        }
+    }
+
+    html.push_str( r#"</table></html>"#);
 
     let mut header = String::new();
     header.push_str("HTTP/1.1 ");
@@ -48,6 +89,42 @@ fn handle_request(_db: &Database, _req: String) -> Vec<u8> {
     result = [result, Vec::from(html.as_bytes())].concat();
     
     return result;
+}
+
+fn vec_string_to_html_row(v : Vec<String>, header : bool) -> String {
+    let mut html = String::from("<tr>");
+    for s in v {
+        match header {
+            true => html.push_str(format!("<th>{}</th>", s).as_str()),
+            false => html.push_str(format!("<td>{}</td>", s).as_str()),
+        };
+    }
+
+    html.push_str("</tr>");
+
+    return html;
+}
+
+fn document_to_html_row(doc : Document, time : u128) -> String {
+    let mut html = String::from(format!("<tr><td>{}</td>", time).as_str());
+
+    for (label, content) in doc {
+        // Don't want label! Ignore it
+        let converted = match content.element_type() {
+            ElementType::Double => content.as_f64().unwrap().to_string(),
+            ElementType::Int32 => content.as_i32().unwrap().to_string(),
+            ElementType::Int64 => content.as_i64().unwrap().to_string(),
+            ElementType::String => content.as_str().unwrap().to_string(),
+            ElementType::Boolean => content.as_bool().unwrap().to_string(),
+            _ => String::from("None")
+        };
+
+        html.push_str(format!("<td>{}</td>", converted).as_str());
+    }
+
+    html.push_str("</tr>");
+
+    return html;
 }
 
 fn main() -> std::io::Result<()> {
@@ -71,6 +148,12 @@ fn main() -> std::io::Result<()> {
     database.insert(1, doc![
         "Name" : "Kim",
         "Cost" : 200,
+        "Member" : true,
+    ]);
+
+    database.insert(35, doc![
+        "Name" : "Bob",
+        "Cost": 50,
         "Member" : true,
     ]);
 
