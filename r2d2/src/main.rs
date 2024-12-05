@@ -29,8 +29,9 @@ fn handle_client(mut stream: TcpStream) {
 
 
 fn handle_request(_db: &mut Database, _req: String) -> Vec<u8> {
-    // Query database and fetch result
+    // Query database and fetch result ////////////////////////
     let result : Document = _db.query(_req.clone());
+    ///////////////////////////////////////////////////////////
 
     let mut html : String = String::from(r#"
         <!DOCTYPE html>
@@ -45,52 +46,62 @@ fn handle_request(_db: &mut Database, _req: String) -> Vec<u8> {
                 <h1>"#);
 
     html.push_str(_req.as_str());
-    html.push_str( r#"</h1></body><table>"#);
+    html.push_str( r#"</h1></body>"#);
 
-    // Header
-    if let header = result.get_array("labels").unwrap() {
-        let mut header_str : Vec<String> = Vec::from(
-            header.iter()
-                .filter(|&s| s.element_type() == ElementType::String)
-                .map(|s| {String::from(s.as_str().unwrap())})
-                .collect::<Vec<String>>()
-        );
-
-        if _req.as_str().contains("LIST") || _req.as_str().contains("INSERT") {
-            header_str.insert(0, String::from("Timestamp"));
-        }
-
-        html.push_str(
-            &*vec_string_to_html_row(header_str, true)
-        );
+    if _req.contains("::HIDE") {
+        html.push_str("Success");
     }
 
-    // Contents
-    if let mut body = result.get_document("rows").unwrap() {
-        for (label, content) in body.iter() {
-            match content.element_type() {
-                ElementType::EmbeddedDocument => {
-                    html.push_str(
-                        &*document_to_html_row(
-                            content.as_document().unwrap().clone(),
-                            label.parse::<u128>().unwrap_or(0)
-                        )
-                    );
-                }
+    else {
+        html.push_str("<table>");
 
-                _ => {
-                    html.push_str(format!(
-                        "<tr><td>{}</td></tr>",
-                        content.to_string()
-                    ).as_str());
-                }
+        // Header
+        if let header = result.get_array("labels").unwrap() {
+            let mut header_str : Vec<String> = Vec::from(
+                header.iter()
+                    .filter(|&s| s.element_type() == ElementType::String)
+                    .map(|s| {String::from(s.as_str().unwrap())})
+                    .collect::<Vec<String>>()
+            );
+
+            if _req.as_str().contains("LIST") || _req.as_str().contains("INSERT") {
+                header_str.insert(0, String::from("Timestamp"));
             }
 
-
+            html.push_str(
+                &*vec_string_to_html_row(header_str, true)
+            );
         }
+
+        // Contents
+        if let mut body = result.get_document("rows").unwrap() {
+            for (label, content) in body.iter() {
+                match content.element_type() {
+                    ElementType::EmbeddedDocument => {
+                        html.push_str(
+                            &*document_to_html_row(
+                                content.as_document().unwrap().clone(),
+                                label.parse::<u128>().unwrap_or(0)
+                            )
+                        );
+                    }
+
+                    _ => {
+                        html.push_str(format!(
+                            "<tr><td>{}</td></tr>",
+                            content.to_string()
+                        ).as_str());
+                    }
+                }
+
+
+            }
+        }
+
+        html.push_str( r#"</table>"#);
     }
 
-    html.push_str( r#"</table></html>"#);
+    html.push_str(r#"</html>"#);
 
     let mut header = String::new();
     header.push_str("HTTP/1.1 ");

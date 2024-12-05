@@ -2,7 +2,7 @@
 
 Queries formatted as get requests.
 
-127.0.0.1/<operation>[::<category>]::<options>
+127.0.0.1/<operation>[::<category>]::<options>[::HIDE]
 
 operations:
 TIME::<ISO time>
