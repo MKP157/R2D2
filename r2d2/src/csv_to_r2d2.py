@@ -10,7 +10,7 @@ def unix_time_millis(dt):
     return int((dt - EPOCH.replace(tzinfo=None)).total_seconds() * 1000)
 
 if __name__ == "__main__":
-    df = pd.read_csv('train.csv', index_col=0, nrows=10000)
+    df = pd.read_csv('train.csv', index_col=0, nrows=100)
 
     header = df.columns.values.tolist()
 
@@ -25,9 +25,9 @@ if __name__ == "__main__":
         time = unix_time_millis(datetime.datetime.strptime(str(index), "%Y-%m-%d"))
 
         put = put[:-1]
-        put += f"::TIMESTAMP={time}"
-
+        put += f"::TIMESTAMP={time}::HIDE"
 
         status = requests.get(put).status_code
+
         if status != 200:
             print(status)

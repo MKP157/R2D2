@@ -28,10 +28,7 @@ INSERT
 REMOVE
     ::ALL
     ::ONE
-        ::TIME
-        ::FIELD=VALUE
-
-    ::MANY
+        ::TIME=VALUE
 
 SAVE
     [::NAME]

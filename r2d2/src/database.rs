@@ -213,9 +213,34 @@ impl Database {
                 return self.query("LIST::ALL".to_string());
             }
 
-            // TODO: REMOVE
-            // TODO: SAVE
-            // TODO: LOAD
+            "REMOVE" => {
+                match String::from(options[1]) {
+                    String::from("ALL") => {
+                        for k in self.bptree.raw_iter() {
+                            self.remove(k);
+                        }
+
+                        return self.query("LIST::ALL".to_string());
+                    }
+
+                    String::from("ONE") => {
+                        if options[2].contains("TIME") {
+                            let timestamp = options[2].split("=")[1].parse::<u128>();
+
+                            if timestamp.is_some() {
+                                self.bptree.remove(&timestamp.unwrap());
+                            }
+                        }
+
+                        return self.query("LIST::ALL".to_string());
+                    }
+
+                    _ => {
+                        // If invalid, just do nothing, and list whole database.
+                        return self.query("LIST::ALL".to_string());
+                    }
+                }
+            }
 
             "TIME" | _ => {
                 println!("{}", options[1]);

@@ -1,10 +1,9 @@
 mod database;
-use http::{response, Request, Response, StatusCode, Version};
 use std::io::{BufRead, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use bson::{doc, Document};
+use bson::{Document};
 use bson::spec::ElementType;
-use crate::database::{Database, DATA_PATH};
+use crate::database::{Database};
 
 use std::{fs, io};
 use std::io::ErrorKind;
@@ -41,6 +40,12 @@ fn handle_request(_db: &mut Database, _req: String) -> Vec<u8> {
                 <link rel="icon" href="data:,">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>R2D2</title>
+
+                <style>
+                table { border: 2px black solid; width: 80%; }
+                th { border: 1px black solid; }
+                td { border: 1px black solid; }
+                </style>
             </head>
             <body>
                 <h1>"#);
@@ -53,7 +58,7 @@ fn handle_request(_db: &mut Database, _req: String) -> Vec<u8> {
     }
 
     else {
-        html.push_str("<table>");
+        html.push_str(r#"<table>"#);
 
         // Header
         if let header = result.get_array("labels").unwrap() {
@@ -156,39 +161,11 @@ fn main() -> std::io::Result<()> {
     } else {
         println!("Directory created or already exists.");
     }
+
     let mut database = Database::new(
         vec![String::from("store"), String::from("product"), String::from("number_sold")],
         vec![String::from("number"), String::from("number"), String::from("number")]
     );
-
-    /*let mut database = Database::new(
-        vec![String::from("Name"), String::from("Cost"), String::from("Member")],
-        vec![String::from("string"), String::from("number"), String::from("bool")]
-    );
-
-    database.insert_to_database(5, doc![
-        "Name" : "Matthew",
-        "Cost" : 100,
-        "Member" : false,
-    ]);
-
-    database.insert_to_database(7, doc![
-        "Name" : "Aiden",
-        "Cost" : 65,
-        "Member" : false,
-    ]);
-
-    database.insert_to_database(1, doc![
-        "Name" : "Kim",
-        "Cost" : 200,
-        "Member" : true,
-    ]);
-
-    database.insert_to_database(35, doc![
-        "Name" : "Bob",
-        "Cost": 50,
-        "Member" : true,
-    ]);*/
 
     let listener = TcpListener::bind("127.0.0.1:6969")?;
 
@@ -198,7 +175,7 @@ fn main() -> std::io::Result<()> {
 
         // You can kind of think of this line of code as if it were
         // a scanner in Java. That's basically what it's doing.
-        let mut rdr = std::io::BufReader::new(&mut stream);
+        let mut rdr = io::BufReader::new(&mut stream);
 
         /* [[[[[[[[[[[[[[ THE LISTEN LOOP ]]]]]]]]]]]]] */
         // This loop will get every string that the listener
@@ -217,14 +194,13 @@ fn main() -> std::io::Result<()> {
                 requested_resource = l
                     .split(" ").collect::<Vec<&str>>()[1].to_string()
                     .split("/").collect::<Vec<&str>>()[1].to_string();
-                // println!("REQUESTED RESOURCE: {}", requested_resource);
+                println!("REQUESTED RESOURCE: {}", requested_resource);
             }
-
-            //print!("{l}");
         }
 
         let response = handle_request(&mut database, requested_resource);
         stream.write(&response).expect("TODO: panic message");
     }
+
     Ok(())
 }
