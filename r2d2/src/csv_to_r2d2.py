@@ -27,7 +27,7 @@ if __name__ == "__main__":
         put = put[:-1]
         put += f"::TIMESTAMP={time}::HIDE"
 
-        status = requests.get(put).status_code
+        status = requests.get(put, timeout=1).status_code
 
         if status != 200:
             print(status)

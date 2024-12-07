@@ -69,7 +69,8 @@ fn handle_request(_db: &mut Database, _req: String) -> Vec<u8> {
                     .collect::<Vec<String>>()
             );
 
-            if _req.as_str().contains("LIST") || _req.as_str().contains("INSERT") {
+            if (_req.as_str().contains("LIST") || _req.as_str().contains("INSERT"))
+                && !_req.as_str().contains("SAVED") {
                 header_str.insert(0, String::from("Timestamp"));
             }
 
@@ -200,6 +201,7 @@ fn main() -> std::io::Result<()> {
 
         let response = handle_request(&mut database, requested_resource);
         stream.write(&response).expect("TODO: panic message");
+
     }
 
     Ok(())

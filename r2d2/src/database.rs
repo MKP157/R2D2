@@ -1,13 +1,18 @@
 use std::{fs, io};
+use std::fmt::format;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Error, Read};
+use std::io::Write;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use bplustree::GenericBPlusTree;
 use bson::{doc, Bson, Document};
 use bson::spec::ElementType;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use chrono::format::ParseError;
+use serde::Serialize;
 
 pub const FAN_OUT : usize = 10;
-pub const DATA_PATH : &str = "data";
+pub const DATA_PATH : &str = "./data";
 
 pub struct Database {
     bptree: GenericBPlusTree<u128, bson::Document, FAN_OUT, FAN_OUT>,
@@ -23,6 +28,15 @@ fn type_string_to_bson_element (string: &str) -> Option<ElementType> {
         "boolean" => Some(ElementType::Boolean),
         _ => { eprintln!("INVALID TYPE : {}", string); None }
     }
+}
+
+fn error_page (error: String) -> Document {
+    return doc![
+        "labels" : ["Error"],
+        "rows" : doc![
+            "Error" : error,
+        ]
+    ]
 }
 
 impl Database {
@@ -130,7 +144,7 @@ impl Database {
                     }
 
                     "SAVED" => {
-                        let file_list = list_files().unwrap_or(vec!["No saved databases found.".parse().unwrap()]);
+                        let file_list = list_files(DATA_PATH.parse().unwrap()).unwrap_or(vec!["No saved databases found.".parse().unwrap()]);
                         let mut file_list_doc = bson::Document::new();
                         for (i, f) in file_list.iter().enumerate() {
                             file_list_doc.insert(&i.to_string(), f.clone());
@@ -214,20 +228,13 @@ impl Database {
             }
 
             "REMOVE" => {
-                match String::from(options[1]) {
-                    String::from("ALL") => {
-                        for k in self.bptree.raw_iter() {
-                            self.remove(k);
-                        }
+                match options[1] {
 
-                        return self.query("LIST::ALL".to_string());
-                    }
-
-                    String::from("ONE") => {
+                   "ONE" => {
                         if options[2].contains("TIME") {
-                            let timestamp = options[2].split("=")[1].parse::<u128>();
+                            let timestamp = options[2].split("=").collect::<Vec<&str>>()[1].parse::<u128>();
 
-                            if timestamp.is_some() {
+                            if timestamp.is_ok() {
                                 self.bptree.remove(&timestamp.unwrap());
                             }
                         }
@@ -242,7 +249,7 @@ impl Database {
                 }
             }
 
-            "TIME" | _ => {
+            "TIME" => {
                 println!("{}", options[1]);
 
                 let timestamp = NaiveDateTime::parse_from_str(&options[1].replace("%20", " "), "%Y-%m-%d %H:%M:%S")
@@ -257,6 +264,36 @@ impl Database {
                     ]
                 ]
             }
+
+            "SAVE" => {
+                if options.len() < 2 {
+                    return error_page(String::from("Provide a filename to save the database. Example: 'SAVE::database_name'"));
+                }
+
+                else {
+                    self.save(options[1].clone().parse().unwrap());
+                    return self.query("LIST::ALL".to_string());
+                }
+            }
+
+            "LOAD" => {
+                if options.len() < 2 {
+                    return error_page(String::from("Provide a filename to load the database. Example: 'LOAD::database_name'"));
+                }
+
+                else {
+                    let result = self.load(options[1].clone().parse().unwrap());
+                    if result.is_ok() {
+                        return self.query("LIST::ALL".to_string());
+                    }
+
+                    else {
+                        return error_page(String::from("LOAD operation failed. See server logs."));
+                    }
+                }
+            }
+
+            _ => return error_page(format!("Invalid query: {}", query_string)),
         }
     }
 
@@ -339,11 +376,71 @@ impl Database {
 
         result
     }
+
+    pub fn save(&self, filename: String) {
+        // Because the Rust BSON package itself does not support u128, we will need
+        // to convert them to strings, and parse them when loading the database.
+
+        let mut serialized = Document::new();
+        let mut serialized_rows = Document::new();
+        serialized.insert("schema", self.schema.clone());
+        serialized.insert("min_timestamp", self.min_timestamp.clone().to_string());
+        serialized.insert("max_timestamp", self.max_timestamp.clone().to_string());
+
+        let mut cursor = self.bptree.raw_iter();
+        cursor.seek_to_first();
+
+        let mut current_row = cursor.next();
+        while current_row.is_some() {
+            let (key, row) = current_row.unwrap();
+
+            serialized_rows.insert(key.clone().to_string(), row.clone());
+            current_row = cursor.next();
+        }
+
+        serialized.insert("rows", serialized_rows);
+        save_file_unique(filename, serialized).unwrap();
+    }
+
+    pub fn load (&mut self, filename: String) -> Result<(), Error>{
+        if list_files(DATA_PATH.parse().unwrap())?.contains(&filename) {
+            let file_document = Document::from_reader(File::open(format!("{DATA_PATH}/{filename}"))?);
+
+            if file_document.is_err() {
+                println!("{}", file_document.unwrap_err());
+            }
+
+            else {
+                let mut deserialized_document = file_document.unwrap();
+
+                let schema = deserialized_document.get("schema").unwrap().as_document().unwrap();
+                let schema_keys = schema.keys().collect::<Vec<&String>>();
+                let schema_types = schema.values();
+
+                let schema_keys_s = schema_keys.iter().map(|k| k.to_string()).collect::<Vec<String>>();
+                let schema_types_s = schema_types.into_iter().map(|k| k.to_string()).collect::<Vec<String>>();
+
+                *self = Database::new(
+                    schema_keys_s, schema_types_s
+                );
+
+                self.min_timestamp = deserialized_document.get("min_timestamp").unwrap().as_str().unwrap().parse::<u128>().unwrap();
+                self.max_timestamp = deserialized_document.get("max_timestamp").unwrap().as_str().unwrap().parse::<u128>().unwrap();
+
+                let rows = deserialized_document.get("rows").unwrap().as_document().unwrap();
+                for (key, row) in rows.iter() {
+                    self.insert_to_database(key.parse::<u128>().unwrap(), row.as_document().unwrap().clone());
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 
-fn list_files() -> Result<Vec<String>, io::Error> {
-    let paths = fs::read_dir(DATA_PATH)?;
+fn list_files(path: String) -> Result<Vec<String>, Error> {
+    let paths = fs::read_dir(path)?;
 
     let mut result = Vec::new();
 
@@ -355,4 +452,27 @@ fn list_files() -> Result<Vec<String>, io::Error> {
     }
 
     Ok(result)
+}
+
+fn save_file_unique(mut filename: String, data: Document) -> Result<(), Error> {
+    let directory_list = list_files(DATA_PATH.parse().unwrap())?;
+
+    let mut new_filename = filename.clone();
+
+    if !directory_list.is_empty() {
+        let mut postfix = 0;
+        let mut exists = directory_list.contains(&filename);
+        while exists {
+            new_filename = filename.replace(".", &*String::from(format!("_{}", postfix)));
+            exists = directory_list.contains(&new_filename);
+        }
+    }
+
+    let mut output_file = File::create(format!("{}/{}", DATA_PATH, filename))?;
+    let mut v : Vec<u8> = Vec::new();
+    data.to_writer(&mut v).unwrap();
+
+    output_file.write_all(&v)?;
+
+    Ok(())
 }
