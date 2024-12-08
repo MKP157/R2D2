@@ -556,6 +556,7 @@ dependencies = [
  "bson",
  "chrono",
  "http",
+ "log 0.4.22",
  "sanitize-filename",
  "serde",
  "serde_any",

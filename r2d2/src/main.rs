@@ -1,12 +1,12 @@
 mod database;
+use crate::database::Database;
+use bson::spec::ElementType;
+use bson::Document;
+use chrono::{DateTime, Local};
+use std::io::ErrorKind;
 use std::io::{BufRead, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use bson::{Document};
-use bson::spec::ElementType;
-use crate::database::{Database};
-
 use std::{fs, io};
-use std::io::ErrorKind;
 
 fn create_dir(path: &str) -> Result<(), io::Error> {
     match fs::create_dir_all(path) {
@@ -21,7 +21,7 @@ fn handle_client(mut stream: TcpStream) {
     println!("Connection from {}", stream.peer_addr().unwrap());
     let buf = &mut [0; 512];
 
-    for line in stream.read(buf) {
+    if let Ok(_) = stream.read(buf) {
         println!("{:?}", buf.to_vec());
     }
 }
@@ -51,7 +51,12 @@ fn handle_request(_db: &mut Database, _req: String) -> Vec<u8> {
                 <h1>"#);
 
     html.push_str(_req.as_str());
-    html.push_str( r#"</h1></body>"#);
+    html.push_str( r#"</h1>
+        <nav> Quick Actions :
+            <a href="/LIST::ALL">List All</a> |
+            <a href="/LIST::SAVED">List Saved Databases</a>
+        </nav>
+    </body>"#);
 
     if _req.contains("::HIDE") {
         html.push_str("Success");
@@ -80,7 +85,7 @@ fn handle_request(_db: &mut Database, _req: String) -> Vec<u8> {
         }
 
         // Contents
-        if let mut body = result.get_document("rows").unwrap() {
+        if let body = result.get_document("rows").unwrap() {
             for (label, content) in body.iter() {
                 match content.element_type() {
                     ElementType::EmbeddedDocument => {
@@ -137,7 +142,7 @@ fn vec_string_to_html_row(v : Vec<String>, header : bool) -> String {
 fn document_to_html_row(doc : Document, time : u128) -> String {
     let mut html = String::from(format!("<tr><td>{}</td>", time).as_str());
 
-    for (label, content) in doc {
+    for (_, content) in doc {
         // Don't want label! Ignore it
         let converted = match content.element_type() {
             ElementType::Double => content.as_f64().unwrap().to_string(),
@@ -168,7 +173,16 @@ fn main() -> std::io::Result<()> {
         vec![String::from("number"), String::from("number"), String::from("number")]
     );
 
+    println!("\n\n==========================================================");
+    println!("Welcome to R2D2!");
+    let current_local: DateTime<Local> = Local::now();
+    let custom_format = current_local.format("%Y-%m-%d %H:%M:%S");
+    println!("The current time is {}.", custom_format);
+    println!("==========================================================\n");
+
+
     let listener = TcpListener::bind("127.0.0.1:6969")?;
+    println!(">> Listening for requests at http://127.0.0.1:6969/...");
 
     // accept connections and process them serially
     for mut stream in listener.incoming().flatten() {
@@ -195,7 +209,9 @@ fn main() -> std::io::Result<()> {
                 requested_resource = l
                     .split(" ").collect::<Vec<&str>>()[1].to_string()
                     .split("/").collect::<Vec<&str>>()[1].to_string();
-                println!("REQUESTED RESOURCE: {}", requested_resource);
+                if !requested_resource.contains("HIDE") {
+                    println!("REQUESTED RESOURCE: {}", requested_resource);
+                }
             }
         }
 

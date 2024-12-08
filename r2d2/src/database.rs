@@ -1,21 +1,18 @@
-use std::{fs, io};
-use std::fmt::format;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Error, Read};
-use std::io::Write;
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 use bplustree::GenericBPlusTree;
-use bson::{doc, Bson, Document};
 use bson::spec::ElementType;
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use serde::Serialize;
+use bson::{doc, Bson, Document};
+use chrono::NaiveDateTime;
+use std::fs::File;
+use std::io::Write;
+use std::io::{Error};
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::fs;
 
-pub const FAN_OUT : usize = 10;
+pub const FAN_OUT : usize = 2000;
 pub const DATA_PATH : &str = "./data";
 
 pub struct Database {
-    bptree: GenericBPlusTree<u128, bson::Document, FAN_OUT, FAN_OUT>,
+    bptree: Box<GenericBPlusTree<u128, bson::Document, FAN_OUT, FAN_OUT>>,
     schema: bson::Document,
     min_timestamp: u128,
     max_timestamp: u128,
@@ -30,11 +27,34 @@ fn type_string_to_bson_element (string: &str) -> Option<ElementType> {
     }
 }
 
-fn error_page (error: String) -> Document {
+fn document_to_csv_row(doc : Document, time : u128) -> String {
+    let mut csv = String::new();
+    csv.push_str(format!("{}", time).as_str());
+
+    for (_, content) in doc {
+        // Don't want label! Ignore it
+        let converted = match content.element_type() {
+            ElementType::Double => content.as_f64().unwrap().to_string(),
+            ElementType::Int32 => content.as_i32().unwrap().to_string(),
+            ElementType::Int64 => content.as_i64().unwrap().to_string(),
+            ElementType::String => content.as_str().unwrap().to_string(),
+            ElementType::Boolean => content.as_bool().unwrap().to_string(),
+            _ => String::from("None")
+        };
+
+        csv.push_str(format!(",{}", converted).as_str());
+    }
+
+    csv.push_str("\n");
+
+    return csv;
+}
+
+fn notice_page(notice: String) -> Document {
     return doc![
-        "labels" : ["Error"],
+        "labels" : ["Notice"],
         "rows" : doc![
-            "Error" : error,
+            "Notice" : notice,
         ]
     ]
 }
@@ -44,7 +64,7 @@ impl Database {
         assert_eq!(fields.len(), types.len());
 
         let mut db = Database {
-            bptree: bplustree::GenericBPlusTree::new(),
+            bptree: Box::new(bplustree::GenericBPlusTree::new()),
             schema: Document::new(),
             min_timestamp: u128::MAX,
             max_timestamp: u128::MIN,
@@ -57,7 +77,7 @@ impl Database {
         db
     }
 
-    pub fn insert_to_database(&mut self, key : u128, val : bson::Document) {
+    pub fn insert_to_database(&mut self, mut key : u128, val : bson::Document) {
         if self.min_timestamp > key {
             self.min_timestamp = key;
         }
@@ -66,34 +86,26 @@ impl Database {
             self.max_timestamp = key;
         }
 
-        let already_in_tree = self.bptree.lookup(&key, |value| value.clone()).is_some();
-
-        // If the key timestamp is already taken, the database will keep attempting
-        // inserts until it finds the closest available timestamp.
-        if already_in_tree {
-            self.insert_to_database(key+1, val);
+        let mut already_in_tree = self.bptree.lookup(&key, |value| value.clone()).is_some();
+        while already_in_tree {
+            key = key + 1;
+            already_in_tree = self.bptree.lookup(&key, |value| value.clone()).is_some();
         }
 
-        else {
-            let entry_keys = val.keys();
-            for key in entry_keys {
-                if !self.schema.contains_key(&key) {
-                    eprintln!("Missing key {} in database schema! Must be one of:", key);
-                    for k in self.schema.keys() {
-                        eprintln!("{}", k);
-                    }
 
-                    return;
+        let entry_keys = val.keys();
+        for key in entry_keys {
+            if !self.schema.contains_key(&key) {
+                eprintln!("Missing key {} in database schema! Must be one of:", key);
+                for k in self.schema.keys() {
+                    eprintln!("{}", k);
                 }
-            }
 
-            self.bptree.insert(key, val);
+                return;
+            }
         }
 
-    }
-
-    pub fn remove(&mut self, key : u128) {
-        self.bptree.remove(&key);
+        self.bptree.insert(key, val);
     }
 
     // Returns document laid out as so:
@@ -112,21 +124,47 @@ impl Database {
                     "ALL" => {
                         let results = self.get_range(u128::MIN, u128::MAX);
 
-                        return doc![
-                            "labels" : self.schema.keys().cloned().collect::<Vec<String>>(),
-                            "rows" : results,
-                        ]
+                        return if query_string.contains("HIDE") {
+                            notice_page(String::from("Success!"))
+                        } else {
+                            doc![
+                                "labels" : self.schema.keys().cloned().collect::<Vec<String>>(),
+                                "rows" : results,
+                            ]
+                        }
+                    }
+
+                    "ONE" => {
+                        let key = options[2].parse::<u128>().unwrap();
+                        let result = self.bptree.lookup(&key, |value| value.clone());
+
+                        if result.is_some() {
+                            return if query_string.contains("HIDE") {
+                                notice_page(String::from("Requested value found."))
+                            } else {
+                                doc![
+                                "labels" : self.schema.keys().cloned().collect::<Vec<String>>(),
+                                "rows" : doc![
+                                        options[2] : result.unwrap()
+                                    ]
+                                ]
+                            }
+                        }
+
+                        else {
+                            notice_page(String::from("Requested value could not be found."))
+                        }
                     }
 
                     "RANGE" => {
                         let bounds = options[2].split(",").collect::<Vec<&str>>();
-                        let mut lower = u128::MIN;
-                        let mut upper = u128::MAX;
+                        let lower;
+                        let upper;
 
                         let bound_0 = bounds[0].parse::<u128>().unwrap();
                         let bound_1 = bounds[1].parse::<u128>().unwrap();
 
-                        if bound_0 < bound_1 {
+                        if bound_0 <= bound_1 {
                             lower = bound_0;
                             upper = bound_1;
                         }
@@ -137,10 +175,15 @@ impl Database {
                         }
 
                         let results = self.get_range(lower, upper);
-                        return doc![
-                            "labels" : self.schema.keys().cloned().collect::<Vec<String>>(),
-                            "rows" : results,
-                        ]
+
+                        return if query_string.contains("HIDE") {
+                            notice_page(String::from("Success!"))
+                        } else {
+                            doc![
+                                "labels" : self.schema.keys().cloned().collect::<Vec<String>>(),
+                                "rows" : results,
+                            ]
+                        }
                     }
 
                     "SAVED" => {
@@ -223,8 +266,7 @@ impl Database {
                     self.insert_to_database(timestamp, row_document);
                 }
 
-                // After inserting, list all.
-                return self.query("LIST::ALL".to_string());
+                return notice_page(String::from("Success!"));
             }
 
             "REMOVE" => {
@@ -239,12 +281,11 @@ impl Database {
                             }
                         }
 
-                        return self.query("LIST::ALL".to_string());
+                        return notice_page(String::from("Success!"));
                     }
 
                     _ => {
-                        // If invalid, just do nothing, and list whole database.
-                        return self.query("LIST::ALL".to_string());
+                        return notice_page(String::from("Invalid query. Currently, only one entry can be removed at a time, by timestamp."));
                     }
                 }
             }
@@ -267,33 +308,37 @@ impl Database {
 
             "SAVE" => {
                 if options.len() < 2 {
-                    return error_page(String::from("Provide a filename to save the database. Example: 'SAVE::database_name'"));
+                    return notice_page(String::from("Provide a filename to save the database. Example: 'SAVE::database_name'"));
                 }
 
+                else if options[1].contains("CSV") {
+                    self.data_to_csv();
+                    return notice_page(String::from("Dumped database to CSV."));
+                }
                 else {
-                    self.save(options[1].clone().parse().unwrap());
+                    self.save(options[1].parse().unwrap());
                     return self.query("LIST::ALL".to_string());
                 }
             }
 
             "LOAD" => {
                 if options.len() < 2 {
-                    return error_page(String::from("Provide a filename to load the database. Example: 'LOAD::database_name'"));
+                    return notice_page(String::from("Provide a filename to load the database. Example: 'LOAD::database_name'"));
                 }
 
                 else {
-                    let result = self.load(options[1].clone().parse().unwrap());
+                    let result = self.load(options[1].parse().unwrap());
                     if result.is_ok() {
                         return self.query("LIST::ALL".to_string());
                     }
 
                     else {
-                        return error_page(String::from("LOAD operation failed. See server logs."));
+                        return notice_page(String::from("LOAD operation failed. See server logs."));
                     }
                 }
             }
 
-            _ => return error_page(format!("Invalid query: {}", query_string)),
+            _ => return notice_page(format!("Invalid query: {}", query_string)),
         }
     }
 
@@ -333,7 +378,7 @@ impl Database {
         let mut cursor = iter.next();
 
         while cursor.is_some() {
-            let (current_key, current_row) = cursor.unwrap();
+            let (_, current_row) = cursor.unwrap();
             let value = current_row.get(&field_name);
 
             if value.is_some() {
@@ -411,7 +456,7 @@ impl Database {
             }
 
             else {
-                let mut deserialized_document = file_document.unwrap();
+                let deserialized_document = file_document.unwrap();
 
                 let schema = deserialized_document.get("schema").unwrap().as_document().unwrap();
                 let schema_keys = schema.keys().collect::<Vec<&String>>();
@@ -436,6 +481,29 @@ impl Database {
 
         Ok(())
     }
+
+    pub fn data_to_csv(&mut self) {
+        let mut f = File::create(format!("{}/dump.csv", DATA_PATH)).expect("Unable to create file");
+        let mut header = String::from("timestamp");
+        for k in self.schema.keys() {
+            header.push_str(format!(",{}", &k).as_str());
+        }
+
+        header.push_str("\n");
+        f.write(header.as_bytes()).expect("Unable to write header");
+
+        let mut cursor = self.bptree.raw_iter();
+        cursor.seek_to_first();
+
+        let mut current_row = cursor.next();
+        while current_row.is_some() {
+            let (key, row) = current_row.unwrap();
+            let s = document_to_csv_row(row.clone(), key.clone());
+            f.write(s.as_bytes()).expect("Unable to write data");
+
+            current_row = cursor.next();
+        }
+    }
 }
 
 
@@ -457,18 +525,26 @@ fn list_files(path: String) -> Result<Vec<String>, Error> {
 fn save_file_unique(mut filename: String, data: Document) -> Result<(), Error> {
     let directory_list = list_files(DATA_PATH.parse().unwrap())?;
 
-    let mut new_filename = filename.clone();
+    let mut new_filename = filename.clone().split(".").collect::<Vec<&str>>()[0].to_string();
+    new_filename.push_str(".r2d2");
 
     if !directory_list.is_empty() {
-        let mut postfix = 0;
-        let mut exists = directory_list.contains(&filename);
+        let mut postfix = 1;
+        let mut exists = directory_list.contains(&new_filename);
+
         while exists {
-            new_filename = filename.replace(".", &*String::from(format!("_{}", postfix)));
+            println!("{} exists...", new_filename);
+
+            new_filename = filename.clone().split(".").collect::<Vec<&str>>()[0].to_string();
+            new_filename = new_filename.replace(".r2d2", "");
+            new_filename.push_str(format!("_{}.r2d2", postfix).as_str());
+
             exists = directory_list.contains(&new_filename);
+            postfix += 1;
         }
     }
 
-    let mut output_file = File::create(format!("{}/{}", DATA_PATH, filename))?;
+    let mut output_file = File::create(format!("{}/{}", DATA_PATH, new_filename))?;
     let mut v : Vec<u8> = Vec::new();
     data.to_writer(&mut v).unwrap();
 
