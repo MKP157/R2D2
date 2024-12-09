@@ -152,7 +152,6 @@ def output_results (logs: dict, db_size : int, chunk_size : int) :
     fig.suptitle(f'Metrics for Sample Data Size {db_size}, Operation Chunk Size {int(chunk_size)}')
     plt.show()
 
-
 def test_insert_r2d2 (dataframe, logging_threshold=1000.0) :
     print("*****TESTING R2D2 INSERT*****")
 
@@ -176,7 +175,7 @@ def test_insert_r2d2 (dataframe, logging_threshold=1000.0) :
 
         # Submit and get status code
         last_time = time.time()
-        status = requests.get(put, timeout=10).status_code
+        status = requests.get(put, timeout=120).status_code
         took += time.time() - last_time
 
         # Print error codes, if any
@@ -233,7 +232,7 @@ def test_query_one (dataframe, logging_threshold=1000.0) :
 
         # Submit and get status code
         last_time = time.time()
-        status = requests.get(r2d2_put, timeout=10).status_code
+        status = requests.get(r2d2_put, timeout=120).status_code
         took_r2d2 += time.time() - last_time
 
         # Print error codes, if any
@@ -262,7 +261,6 @@ def test_query_one (dataframe, logging_threshold=1000.0) :
 
         i += 1
 
-
 def test_query_range (dataframe, num_tests = 1000) :
     print("*****TESTING QUERY RANGE*****")
 
@@ -287,7 +285,7 @@ def test_query_range (dataframe, num_tests = 1000) :
 
         # Submit and get status code
         last_time = time.time()
-        status = requests.get(r2d2_put, timeout=10).status_code
+        status = requests.get(r2d2_put, timeout=120).status_code
         took_r2d2 += time.time() - last_time
 
         # Print error codes, if any
@@ -332,7 +330,7 @@ def test_delete (dataframe, logging_threshold=1000.0) :
 
         # Submit and get status code
         last_time = time.time()
-        status = requests.get(r2d2_put, timeout=10).status_code
+        status = requests.get(r2d2_put, timeout=120).status_code
         took_r2d2 += time.time() - last_time
 
         # Print error codes, if any
@@ -363,15 +361,14 @@ def test_delete (dataframe, logging_threshold=1000.0) :
 
 if __name__ == "__main__":
     for database_size in [
-        10,
+        #10,
         100,
         1000,
         10000,
         100000,
         1000000,
-        10000000,
     ]:
-        CHUNK_SIZE = 100 if database_size > 1000 else database_size / 10
+        CHUNK_SIZE = 1000 if database_size > 10000 else database_size / 100
         LIMIT = database_size
 
         results = {
@@ -427,7 +424,7 @@ if __name__ == "__main__":
         r2d2_put = f"http://127.0.0.1:6969/LOAD::empty.r2d2"
 
         # Submit and get status code
-        status = requests.get(r2d2_put, timeout=10).status_code
+        status = requests.get(r2d2_put, timeout=120).status_code
 
         # Print error codes, if any
         if status != 200:
@@ -448,7 +445,16 @@ if __name__ == "__main__":
         r2d2_put = f"http://127.0.0.1:6969/SAVE::CSV"
 
         # Submit and get status code
-        status = requests.get(r2d2_put, timeout=10).status_code
+        status = requests.get(r2d2_put, timeout=120).status_code
+
+        # Print error codes, if any
+        if status != 200:
+            print(status)
+
+        r2d2_put = f"http://127.0.0.1:6969/SAVE::test_{LIMIT}.r2d2"
+
+        # Submit and get status code
+        status = requests.get(r2d2_put, timeout=120).status_code
 
         # Print error codes, if any
         if status != 200:
@@ -463,7 +469,7 @@ if __name__ == "__main__":
 
         # Query tests
         test_query_one(new_df, CHUNK_SIZE)
-        test_query_range(dataframe=new_df, num_tests=int(LIMIT/100 if LIMIT > 1000 else 10))
+        test_query_range(dataframe=new_df, num_tests=int(LIMIT/100 if LIMIT > 1000 else 100))
 
         #input('\033[32m >>> Check for rows, then press enter to continue...\033[00m')
         test_delete(new_df, CHUNK_SIZE)
@@ -471,19 +477,11 @@ if __name__ == "__main__":
 
         conn.close()
 
-        r2d2_put = f"http://127.0.0.1:6969/SAVE::test_{LIMIT}.r2d2"
-
-        # Submit and get status code
-        status = requests.get(r2d2_put, timeout=10).status_code
-
-        # Print error codes, if any
-        if status != 200:
-            print(status)
-
         # Graphing
         output_results(results, LIMIT, CHUNK_SIZE)
 
         pprint.pp(results)
+        time.sleep(5)
 
     print("Done!")
     exit(1)

@@ -1,1 +1,0 @@
-{ "schema": { "store": "number", "product": "number", "number_sold": "number" }, "min_timestamp": "340282366920938463463374607431768211455", "max_timestamp": "0", "rows": {} }

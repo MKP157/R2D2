@@ -169,8 +169,15 @@ fn main() -> std::io::Result<()> {
     }
 
     let mut database = Database::new(
-        vec![String::from("store"), String::from("product"), String::from("number_sold")],
-        vec![String::from("number"), String::from("number"), String::from("number")]
+        vec![
+            String::from("store"),
+            String::from("product"),
+            String::from("number_sold")
+        ],
+        vec![
+            String::from("number"),
+            String::from("number"),
+            String::from("number")]
     );
 
     println!("\n\n==========================================================");

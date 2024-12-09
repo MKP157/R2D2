@@ -278,10 +278,11 @@ impl Database {
 
                             if timestamp.is_ok() {
                                 self.bptree.remove(&timestamp.unwrap());
+                                return notice_page(String::from("Success!"));
                             }
                         }
 
-                        return notice_page(String::from("Success!"));
+                       return notice_page(String::from("Entry not found."));
                     }
 
                     _ => {
@@ -296,7 +297,7 @@ impl Database {
                 let timestamp = NaiveDateTime::parse_from_str(&options[1].replace("%20", " "), "%Y-%m-%d %H:%M:%S")
                     .unwrap()
                     .and_utc()
-                    .timestamp();
+                    .timestamp() * 1000;
 
                 return doc![
                     "labels" : ["time"],
@@ -316,24 +317,26 @@ impl Database {
                     return notice_page(String::from("Dumped database to CSV."));
                 }
                 else {
-                    self.save(options[1].parse().unwrap());
-                    return self.query("LIST::ALL".to_string());
+                    let sanitized : String = sanitize_filename::sanitize(options[1].to_string());
+                    self.save(sanitized);
+                    return self.query("LIST::SAVED".to_string());
                 }
             }
 
             "LOAD" => {
                 if options.len() < 2 {
-                    return notice_page(String::from("Provide a filename to load the database. Example: 'LOAD::database_name'"));
+                    return notice_page(String::from("Provide a filename to load the database. Example: 'LOAD::<database name>'"));
                 }
 
                 else {
-                    let result = self.load(options[1].parse().unwrap());
-                    if result.is_ok() {
-                        return self.query("LIST::ALL".to_string());
-                    }
+                    let result = self.load(
+                        sanitize_filename::sanitize(options[1].to_string())
+                    );
 
-                    else {
-                        return notice_page(String::from("LOAD operation failed. See server logs."));
+                    return if result.is_ok() {
+                        self.query("LIST::ALL".to_string())
+                    } else {
+                        notice_page(String::from("LOAD operation failed. See server logs."))
                     }
                 }
             }
@@ -383,15 +386,21 @@ impl Database {
 
             if value.is_some() {
                 let parsed_value = value.unwrap();
-                print!("{:?}", parsed_value);
+                //print!("parsed -> {:?}", parsed_value);
 
+                let converted;
+                if parsed_value.as_str().is_some() && parsed_value.as_str().unwrap().parse::<f64>().is_ok() {
+                    converted = parsed_value.as_str().unwrap().parse::<f64>().unwrap();
+                }
 
-                let converted = match parsed_value.element_type() {
-                    ElementType::Double => parsed_value.as_f64().unwrap(),
-                    ElementType::Int32 => (parsed_value.as_i32().unwrap()) as f64,
-                    ElementType::Int64 => (parsed_value.as_i64().unwrap()) as f64,
-                    _ => 0.0
-                };
+                else {
+                    converted = match parsed_value.element_type() {
+                        ElementType::Double => parsed_value.as_f64().unwrap(),
+                        ElementType::Int32 => (parsed_value.as_i32().unwrap()) as f64,
+                        ElementType::Int64 => (parsed_value.as_i64().unwrap()) as f64,
+                        _ => 0.0
+                    };
+                }
 
                 match operation.as_str() {
                     "MIN" => {

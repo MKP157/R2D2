@@ -9,6 +9,8 @@ TIME::<ISO time>
 
 LIST
     ::ALL
+    ::ONE
+        ::TIMESTAMP
     ::RANGE
         ::TIMESTAMP,TIMESTAMP
     ::METADATA
@@ -31,7 +33,8 @@ REMOVE
         ::TIME=VALUE
 
 SAVE
-    [::NAME]
+    ::NAME
+    ::CSV
 
 LOAD
     ::NAME
