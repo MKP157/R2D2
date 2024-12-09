@@ -30,3 +30,8 @@ an empty table - that's good! That means it's running, and responding to request
 Using the API reference in the final report, try and explore how to use R2D2 from here.
 
 Further, to run benchmarking tests, run the Python scripts included in the `src` folder.
+
+
+## Copyright Disclaimer
+The character R2D2 and their likeness do not belong to me. The [art I have used](https://pixabay.com/vectors/ai-generated-robot-r2d2-character-8898448/)
+available to anyone for free use and permitted modification under the [Pixabay Content License.](https://pixabay.com/service/license-summary/)
