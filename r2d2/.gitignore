@@ -3,3 +3,4 @@
 !/data/empty.r2d2
 /data/*.csv
 **/*.db
+**/.DS_Store
