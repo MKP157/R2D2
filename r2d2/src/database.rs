@@ -135,6 +135,7 @@ impl Database {
                     }
 
                     "ONE" => {
+                        println!("{} {}", options[2], options[1]);
                         let key = options[2].parse::<u128>().unwrap();
                         let result = self.bptree.lookup(&key, |value| value.clone());
 
@@ -283,6 +284,14 @@ impl Database {
                         }
 
                        return notice_page(String::from("Entry not found."));
+                    }
+                    
+                    "ALL" => {
+                        self.bptree = Box::new(bplustree::GenericBPlusTree::new());
+                        self.min_timestamp = u128::MAX;
+                        self.max_timestamp = u128::MIN;
+                        
+                        return notice_page(String::from("Success!"));
                     }
 
                     _ => {

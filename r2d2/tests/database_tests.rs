@@ -7,18 +7,19 @@ mod database_tests {
 
     // Helper function to create a test database
     fn create_test_db() -> Database {
-        Database::new(
-            vec![
-                String::from("store"),
-                String::from("product"),
-                String::from("number_sold")
-            ],
-            vec![
-                String::from("number"),
-                String::from("number"),
-                String::from("number")
-            ]
-        )
+        // Database::new(
+        //     vec![
+        //         String::from("store"),
+        //         String::from("product"),
+        //         String::from("number_sold")
+        //     ],
+        //     vec![
+        //         String::from("number"),
+        //         String::from("number"),
+        //         String::from("number")
+        //     ]
+        // )
+        Database::from_schema("./test.schema.r2d2");
     }
 
     #[test]

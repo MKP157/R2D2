@@ -27,6 +27,12 @@ cargo test --test database_tests
 cargo test --test serialization_tests
 ```
 
+** Note: API tests MUST be run sequentially due to how they're structured!**
+
+```bash
+cargo test --test api_tests -- --test-threads=1
+```
+
 To run a specific test function:
 
 ```bash
