@@ -3,6 +3,15 @@ name = "r2d2p2"
 version = "0.1.0"
 edition = "2021"
 
+# Define both a binary and a library target
+[[bin]]
+name = "r2d2p2"
+path = "src/main.rs"
+
+[lib]
+name = "r2d2p2"
+path = "src/lib.rs"
+
 [dependencies]
 bplustree = "0.1.0"
 bson = "2.13.0"
