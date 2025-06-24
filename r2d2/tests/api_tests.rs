@@ -41,7 +41,7 @@ mod api_tests {
 
     }
 
-    #[test]
+
     fn test_api_server_connection() {
         clear_and_wait_for_server();
         
@@ -53,7 +53,6 @@ mod api_tests {
         assert!(content.contains("Success") || content.contains("rows") || content.len() > 0);
     }
 
-    #[test]
     fn test_api_insert_and_get_one() {
         clear_and_wait_for_server();
 
@@ -75,7 +74,6 @@ mod api_tests {
         assert!(content.contains("1") && content.contains("101") && content.contains("5"));
     }
 
-    #[test]
     fn test_api_get_range() {
         clear_and_wait_for_server();
 
@@ -103,7 +101,6 @@ mod api_tests {
         assert!(content.len() > 0);
     }
 
-    #[test]
     fn test_api_aggregate_operations() {
         clear_and_wait_for_server();
 
@@ -145,7 +142,6 @@ mod api_tests {
         assert!(max_content.contains("5") || max_content.contains("5.0"));
     }
 
-    #[test]
     fn test_api_query_parsing() {
         clear_and_wait_for_server();
 
@@ -178,7 +174,6 @@ mod api_tests {
         assert!(agg_content.len() > 0);
     }
 
-    #[test]
     fn test_api_time_endpoint() {
         clear_and_wait_for_server();
 
@@ -191,7 +186,6 @@ mod api_tests {
         assert!(time_content.contains("1733570110000") || time_content.chars().any(|c| c.is_numeric()));
     }
 
-    #[test]
     fn test_api_metadata() {
         clear_and_wait_for_server();
 
@@ -203,7 +197,6 @@ mod api_tests {
         assert!(metadata_content.len() > 0);
     }
 
-    #[test]
     fn test_api_remove_operation() {
         clear_and_wait_for_server();
 
@@ -235,5 +228,35 @@ mod api_tests {
             // Should either be empty or not contain our data
             assert!(!content.contains("999") || content.trim().is_empty());
         }
+    }
+    
+    // API tests have to be run sequentially because they expect a certain ordering
+    // of execution. That is why they are all called one-by-one within the following test
+    // (Rust tests are run in parallel by default)
+    #[test]
+    fn api_tests_main() {
+        test_api_server_connection();
+        println!("✓ Passed connection testing (\"test_api_server_connection\")");
+        
+        test_api_insert_and_get_one();
+        println!("✓ Passed single insert with retrieval (\"test_api_insert_and_get_one\")");
+        
+        test_api_get_range();
+        println!("✓ Passed retrieval over range (\"test_api_get_range\")");
+
+        test_api_aggregate_operations();
+        println!("✓ Passed aggregate operations testing (\"test_api_aggregate_operations\")");
+
+        test_api_query_parsing();
+        println!("✓ Passed complex query parsing testing (\"test_api_query_parsing\")");
+
+        test_api_time_endpoint();
+        println!("✓ Passed timestamp endpoint testing (\"test_api_time_endpoint\")");
+
+        test_api_metadata();
+        println!("✓ Passed metadata endpoint testing (\"test_api_get_range\")");
+
+        test_api_remove_operation();
+        println!("✓ Passed data removal testing (\"test_api_remove_operation\")");
     }
 }
