@@ -4,12 +4,16 @@ use bson::{doc, Bson, Document};
 use chrono::NaiveDateTime;
 use std::fs::File;
 use std::io::Write;
-use std::io::{Error};
+use std::io::{Error, BufRead, BufReader};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::fs;
 
 pub const FAN_OUT : usize = 2000;
 pub const DATA_PATH : &str = "./data";
+
+// Arbitrary limits to how large schema files may be.
+pub const SCHEMA_MAX_NUM_COLUMNS : usize = 50000;
+pub const SCHEMA_MAX_COLUMN_LABEL_LEN : usize = 128;
 
 pub struct Database {
     bptree: Box<GenericBPlusTree<u128, bson::Document, FAN_OUT, FAN_OUT>>,
@@ -77,6 +81,89 @@ impl Database {
         db
     }
 
+    pub fn load_schema_from_file(&mut self, filename: String) -> Result<(), String> {
+        let full_path = format!("{}/{}", DATA_PATH, filename);
+
+        // Check if file exists
+        if !std::path::Path::new(&full_path).exists() {
+            return Err(format!("Schema file '{}' not found", filename));
+        }
+
+        // Edge case: handle schema files that contain too many columns.
+        // Open and read the file
+        let line_count_file = File::open(&full_path)
+            .map_err(|e| format!("Failed to open schema file: {}", e))?;
+
+        let mut line_count_reader = BufReader::new(line_count_file);
+
+        let file_line_count = line_count_reader.lines().count();
+        if file_line_count > SCHEMA_MAX_NUM_COLUMNS {
+            return Err(format!("Schema file '{}' is too long; this database supports a maximum of {} columns, the loaded schema contains {}", filename, SCHEMA_MAX_NUM_COLUMNS, file_line_count));
+        }
+
+        // Open and read the file
+        let file = File::open(&full_path)
+            .map_err(|e| format!("Failed to open schema file: {}", e))?;
+
+        let mut reader = BufReader::new(file);
+
+        let mut fields = Vec::new();
+        let mut types = Vec::new();
+
+        // Parse CSV content
+        for (line_num, line) in reader.lines().enumerate() {
+            let line = line.map_err(|e| format!("Error reading line {}: {}", line_num + 1, e))?;
+            let line = line.trim();
+
+            // Skip empty lines and comments
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            // Parse CSV line
+            let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+            if parts.len() != 2 {
+                return Err(format!("Invalid format on line {}: expected 'column,type', got '{}'", line_num + 1, line));
+            }
+
+            // Edge case: truncate columns with names that are too long
+            let column_name = if parts[0].to_string().len() < SCHEMA_MAX_COLUMN_LABEL_LEN {
+                parts[0].to_string()
+
+            } else {
+                parts[0].to_string().chars().take(SCHEMA_MAX_COLUMN_LABEL_LEN).collect()
+
+            };
+
+            // Edge case: column name collision (already in fields)
+            if fields.contains(&column_name) {
+                return Err(format!("Column {} defined more than once (new value on line {})", column_name, line_num + 1));
+            }
+
+            let column_type = parts[1].to_string();
+
+            // Validate column type
+            match column_type.as_str() {
+                "string" | "number" | "boolean" => {
+                    fields.push(column_name);
+                    types.push(column_type);
+                }
+                _ => {
+                    return Err(format!("Invalid column type '{}' on line {}: must be 'string', 'number', or 'boolean'", column_type, line_num + 1));
+                }
+            }
+        }
+
+        if fields.is_empty() {
+            return Err("Schema file contains no valid column definitions".to_string());
+        }
+
+        // Create new database with the loaded schema
+        *self = Database::new(fields, types);
+
+        Ok(())
+    }
+
     pub fn insert_to_database(&mut self, mut key : u128, val : bson::Document) {
         if self.min_timestamp > key {
             self.min_timestamp = key;
@@ -113,244 +200,276 @@ impl Database {
     //    "labels" : vec<strings>,
     //    "rows : Document...
     // }
-    pub fn query(&mut self, query_string : String) -> Document {
-
-        // Split fields using :: delimiter.
+    pub fn query(&mut self, query_string: String) -> Document {
         let options = query_string.trim().split("::").collect::<Vec<&str>>();
 
         match options[0] {
-            "LIST" => {
-                match options[1] {
-                    "ALL" => {
-                        let results = self.get_range(u128::MIN, u128::MAX);
+            "LIST" => self.handle_list_query(&options, &query_string),
+            "AGGREGATE" => self.handle_aggregate_query(&options),
+            "INSERT" => self.handle_insert_query(&options),
+            "REMOVE" => self.handle_remove_query(&options),
+            "TIME" => self.handle_time_query(&options),
+            "SAVE" => self.handle_save_query(&options),
+            "LOAD" => self.handle_load_query(&options),
+            _ => notice_page(format!("Invalid query: {}", query_string)),
+        }
+    }
 
-                        return if query_string.contains("HIDE") {
-                            notice_page(String::from("Success!"))
-                        } else {
-                            doc![
-                                "labels" : self.schema.keys().cloned().collect::<Vec<String>>(),
-                                "rows" : results,
-                            ]
-                        }
-                    }
+    fn handle_list_query(&mut self, options: &[&str], query_string: &str) -> Document {
+        if options.len() < 2 {
+            return notice_page("LIST command requires a category".to_string());
+        }
 
-                    "ONE" => {
-                        println!("{} {}", options[2], options[1]);
-                        let key = options[2].parse::<u128>().unwrap();
-                        let result = self.bptree.lookup(&key, |value| value.clone());
-
-                        if result.is_some() {
-                            return if query_string.contains("HIDE") {
-                                notice_page(String::from("Requested value found."))
-                            } else {
-                                doc![
-                                "labels" : self.schema.keys().cloned().collect::<Vec<String>>(),
-                                "rows" : doc![
-                                        options[2] : result.unwrap()
-                                    ]
-                                ]
-                            }
-                        }
-
-                        else {
-                            notice_page(String::from("Requested value could not be found."))
-                        }
-                    }
-
-                    "RANGE" => {
-                        let bounds = options[2].split(",").collect::<Vec<&str>>();
-                        let lower;
-                        let upper;
-
-                        let bound_0 = bounds[0].parse::<u128>().unwrap();
-                        let bound_1 = bounds[1].parse::<u128>().unwrap();
-
-                        if bound_0 <= bound_1 {
-                            lower = bound_0;
-                            upper = bound_1;
-                        }
-
-                        else {
-                            lower = bound_1;
-                            upper = bound_0;
-                        }
-
-                        let results = self.get_range(lower, upper);
-
-                        return if query_string.contains("HIDE") {
-                            notice_page(String::from("Success!"))
-                        } else {
-                            doc![
-                                "labels" : self.schema.keys().cloned().collect::<Vec<String>>(),
-                                "rows" : results,
-                            ]
-                        }
-                    }
-
-                    "SAVED" => {
-                        let file_list = list_files(DATA_PATH.parse().unwrap()).unwrap_or(vec!["No saved databases found.".parse().unwrap()]);
-                        let mut file_list_doc = bson::Document::new();
-                        for (i, f) in file_list.iter().enumerate() {
-                            file_list_doc.insert(&i.to_string(), f.clone());
-                        }
-
-                        return doc![
-                            "labels" : ["Saved Databases"],
-                            "rows" : file_list_doc,
-                        ]
-                    }
-
-                    // METADATA:
-                    _ => {
-                        doc![
-                            "labels" : ["size", "schema"],
-                            "rows" : doc![
-                                "size" : self.bptree.len() as i64,
-                                "schema" : self.schema.clone(),
-                            ]
-                        ]
-                    }
+        match options[1] {
+            "ALL" => {
+                let results = self.get_range(u128::MIN, u128::MAX);
+                if query_string.contains("HIDE") {
+                    notice_page(String::from("Success!"))
+                } else {
+                    doc![
+                        "labels" : self.schema.keys().cloned().collect::<Vec<String>>(),
+                        "rows" : results,
+                    ]
                 }
             }
+            "ONE" => {
+                if options.len() < 3 {
+                    return notice_page("LIST::ONE requires a timestamp".to_string());
+                }
 
-            "AGGREGATE" => {
-                println!("{} {}", options[2], options[1]);
-                let result = self.aggregate(options[2].parse().unwrap(), options[1].parse().unwrap());
+                let key = match options[2].parse::<u128>() {
+                    Ok(k) => k,
+                    Err(_) => return notice_page("Invalid timestamp format".to_string()),
+                };
+
+                let result = self.bptree.lookup(&key, |value| value.clone());
+                if result.is_some() {
+                    if query_string.contains("HIDE") {
+                        notice_page(String::from("Requested value found."))
+                    } else {
+                        doc![
+                            "labels" : self.schema.keys().cloned().collect::<Vec<String>>(),
+                            "rows" : doc![options[2] : result.unwrap()]
+                        ]
+                    }
+                } else {
+                    notice_page(String::from("Requested value could not be found."))
+                }
+            }
+            "RANGE" => {
+                if options.len() < 3 {
+                    return notice_page("LIST::RANGE requires bounds in format 'lower,upper'".to_string());
+                }
+
+                let bounds = options[2].split(",").collect::<Vec<&str>>();
+                if bounds.len() != 2 {
+                    return notice_page("Invalid range format. Use 'lower,upper'".to_string());
+                }
+
+                let bound_0 = match bounds[0].parse::<u128>() {
+                    Ok(b) => b,
+                    Err(_) => return notice_page("Invalid lower bound".to_string()),
+                };
+                let bound_1 = match bounds[1].parse::<u128>() {
+                    Ok(b) => b,
+                    Err(_) => return notice_page("Invalid upper bound".to_string()),
+                };
+
+                let (lower, upper) = if bound_0 <= bound_1 { (bound_0, bound_1) } else { (bound_1, bound_0) };
+                let results = self.get_range(lower, upper);
+
+                if query_string.contains("HIDE") {
+                    notice_page(String::from("Success!"))
+                } else {
+                    doc![
+                        "labels" : self.schema.keys().cloned().collect::<Vec<String>>(),
+                        "rows" : results,
+                    ]
+                }
+            }
+            "SAVED" => {
+                let file_list = list_files(DATA_PATH.parse().unwrap()).unwrap_or(vec!["No saved databases found.".parse().unwrap()]);
+                let mut file_list_doc = bson::Document::new();
+                for (i, f) in file_list.iter().enumerate() {
+                    file_list_doc.insert(&i.to_string(), f.clone());
+                }
 
                 doc![
-                    "labels" : [options[1]],
+                    "labels" : ["Saved Databases"],
+                    "rows" : file_list_doc,
+                ]
+            }
+            _ => {
+                // METADATA or any other option
+                doc![
+                    "labels" : ["size", "schema"],
                     "rows" : doc![
-                        options[1] : result as i64,
+                        "size" : self.bptree.len() as i64,
+                        "schema" : self.schema.clone(),
                     ]
                 ]
             }
+        }
+    }
 
-            "INSERT" => {
-                let key_value_pairs = options[1]
-                    .split(",")
-                    .collect::<Vec<&str>>();
+    fn handle_aggregate_query(&self, options: &[&str]) -> Document {
+        if options.len() < 3 {
+            return notice_page("AGGREGATE command requires field name and operation".to_string());
+        }
 
-                let mut row_document = Document::new();
+        let field_name = options[1].to_string();
+        let operation = options[2].to_string();
+        let result = self.aggregate(operation.clone(), field_name.clone());
 
-                for pair in key_value_pairs {
-                    let (k, v) = pair.split_once("=").unwrap();
+        doc![
+            "labels" : [operation.as_str()],
+            "rows" : doc![
+                operation.as_str() : result as i64,
+            ]
+        ]
+    }
 
-                    // If the key exists, and the data is valid, insert to database.
-                    if self.schema.contains_key(k) {
-                        let bson_value = match self.schema.get_str(k).unwrap_or("string") {
-                            "bool" => Bson::Boolean(v.parse::<bool>().unwrap()),
-                            "number" => Bson::Double(v.parse::<f64>().unwrap()),
-                            "string" | _ => Bson::String(v.to_string()),
-                        };
+    fn handle_insert_query(&mut self, options: &[&str]) -> Document {
+        if options.len() < 2 {
+            return notice_page("INSERT command requires key-value pairs".to_string());
+        }
 
-                        row_document.insert(k.to_string(), bson_value);
-                    }
+        let key_value_pairs = options[1].split(",").collect::<Vec<&str>>();
+        let mut row_document = Document::new();
+
+        for pair in key_value_pairs {
+            if let Some((k, v)) = pair.split_once("=") {
+                if self.schema.contains_key(k) {
+                    let bson_value = match self.schema.get_str(k).unwrap_or("string") {
+                        "bool" => Bson::Boolean(v.parse::<bool>().unwrap_or(false)),
+                        "number" => Bson::Double(v.parse::<f64>().unwrap_or(0.0)),
+                        "string" | _ => Bson::String(v.to_string()),
+                    };
+                    row_document.insert(k.to_string(), bson_value);
                 }
-
-                let mut timestamp= SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
-
-                if options.len() > 2 {
-                    let t =
-                        options[2].split("=")
-                            .last()
-                            .unwrap()
-                            .parse::<String>()
-                            .unwrap()
-                            .parse::<u128>();
-
-                    if t.is_ok() {
-                        timestamp = t.unwrap();
-                    }
-                }
-
-                if row_document.len() > 0 {
-                    self.insert_to_database(timestamp, row_document);
-                }
-
-                return notice_page(String::from("Success!"));
             }
+        }
 
-            "REMOVE" => {
-                match options[1] {
+        let mut timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
 
-                   "ONE" => {
-                        if options[2].contains("TIME") {
-                            let timestamp = options[2].split("=").collect::<Vec<&str>>()[1].parse::<u128>();
+        if options.len() > 2 {
+            if let Some(t_str) = options[2].split("=").last() {
+                if let Ok(t) = t_str.parse::<u128>() {
+                    timestamp = t;
+                }
+            }
+        }
 
-                            if timestamp.is_ok() {
-                                self.bptree.remove(&timestamp.unwrap());
-                                return notice_page(String::from("Success!"));
-                            }
+        if row_document.len() > 0 {
+            self.insert_to_database(timestamp, row_document);
+        }
+
+        notice_page(String::from("Success!"))
+    }
+
+    fn handle_remove_query(&mut self, options: &[&str]) -> Document {
+        if options.len() < 2 {
+            return notice_page("REMOVE command requires a category".to_string());
+        }
+
+        match options[1] {
+            "ONE" => {
+                if options.len() < 3 {
+                    return notice_page("REMOVE::ONE requires timestamp parameter".to_string());
+                }
+
+                if options[2].contains("TIME") {
+                    if let Some(timestamp_str) = options[2].split("=").nth(1) {
+                        if let Ok(timestamp) = timestamp_str.parse::<u128>() {
+                            self.bptree.remove(&timestamp);
+                            return notice_page(String::from("Success!"));
                         }
-
-                       return notice_page(String::from("Entry not found."));
                     }
-                    
-                    "ALL" => {
-                        self.bptree = Box::new(bplustree::GenericBPlusTree::new());
-                        self.min_timestamp = u128::MAX;
-                        self.max_timestamp = u128::MIN;
-                        
-                        return notice_page(String::from("Success!"));
-                    }
+                }
+                notice_page(String::from("Entry not found."))
+            }
+            "ALL" => {
+                self.bptree = Box::new(bplustree::GenericBPlusTree::new());
+                self.min_timestamp = u128::MAX;
+                self.max_timestamp = u128::MIN;
+                notice_page(String::from("Success!"))
+            }
+            _ => {
+                notice_page(String::from("Invalid query. Currently, only one entry can be removed at a time, by timestamp."))
+            }
+        }
+    }
 
-                    _ => {
-                        return notice_page(String::from("Invalid query. Currently, only one entry can be removed at a time, by timestamp."));
+    fn handle_time_query(&self, options: &[&str]) -> Document {
+        if options.len() < 2 {
+            return notice_page("TIME command requires a timestamp string".to_string());
+        }
+
+        let timestamp = match NaiveDateTime::parse_from_str(&options[1].replace("%20", " "), "%Y-%m-%d %H:%M:%S") {
+            Ok(dt) => dt.and_utc().timestamp() * 1000,
+            Err(_) => return notice_page("Invalid timestamp format. Use YYYY-MM-DD HH:MM:SS".to_string()),
+        };
+
+        doc![
+            "labels" : ["time"],
+            "rows" : doc![
+                "time" : timestamp.to_string(),
+            ]
+        ]
+    }
+
+    fn handle_save_query(&mut self, options: &[&str]) -> Document {
+        if options.len() < 2 {
+            return notice_page(String::from("Provide a filename to save the database. Example: 'SAVE::database_name'"));
+        }
+
+        if options[1].contains("CSV") {
+            self.data_to_csv();
+            notice_page(String::from("Dumped database to CSV."))
+        } else {
+            let sanitized = sanitize_filename::sanitize(options[1].to_string());
+            self.save(sanitized);
+            self.query("LIST::SAVED".to_string())
+        }
+    }
+
+    fn handle_load_query(&mut self, options: &[&str]) -> Document {
+        if options.len() < 2 {
+            return notice_page(String::from("Provide a filename to load. Example: 'LOAD::database_name' or 'LOAD::SCHEMA::schema_file.schema.r2d2'"));
+        }
+
+        match options[1] {
+            "SCHEMA" => {
+                if options.len() < 3 {
+                    return notice_page(String::from("Provide a schema filename. Example: 'LOAD::SCHEMA::schema_file.schema.r2d2'"));
+                }
+
+                match self.load_schema_from_file(options[2].to_string()) {
+                    Ok(_) => {
+                        // Return metadata with success message
+                        let mut metadata_doc = doc![
+                            "labels" : ["message", "schema"],
+                            "rows" : doc![
+                                "message" : "Successfully loaded schema",
+                                "schema" : self.schema.clone(),
+                            ]
+                        ];
+                        metadata_doc
+                    }
+                    Err(error_msg) => {
+                        notice_page(format!("Error loading schema: {}", error_msg))
                     }
                 }
             }
-
-            "TIME" => {
-                println!("{}", options[1]);
-
-                let timestamp = NaiveDateTime::parse_from_str(&options[1].replace("%20", " "), "%Y-%m-%d %H:%M:%S")
-                    .unwrap()
-                    .and_utc()
-                    .timestamp() * 1000;
-
-                return doc![
-                    "labels" : ["time"],
-                    "rows" : doc![
-                        "time" : timestamp.to_string(),
-                    ]
-                ]
-            }
-
-            "SAVE" => {
-                if options.len() < 2 {
-                    return notice_page(String::from("Provide a filename to save the database. Example: 'SAVE::database_name'"));
-                }
-
-                else if options[1].contains("CSV") {
-                    self.data_to_csv();
-                    return notice_page(String::from("Dumped database to CSV."));
-                }
-                else {
-                    let sanitized : String = sanitize_filename::sanitize(options[1].to_string());
-                    self.save(sanitized);
-                    return self.query("LIST::SAVED".to_string());
+            _ => {
+                // Regular database load
+                let result = self.load(sanitize_filename::sanitize(options[1].to_string()));
+                if result.is_ok() {
+                    self.query("LIST::ALL".to_string())
+                } else {
+                    notice_page(String::from("LOAD operation failed. See server logs."))
                 }
             }
-
-            "LOAD" => {
-                if options.len() < 2 {
-                    return notice_page(String::from("Provide a filename to load the database. Example: 'LOAD::<database name>'"));
-                }
-
-                else {
-                    let result = self.load(
-                        sanitize_filename::sanitize(options[1].to_string())
-                    );
-
-                    return if result.is_ok() {
-                        self.query("LIST::ALL".to_string())
-                    } else {
-                        notice_page(String::from("LOAD operation failed. See server logs."))
-                    }
-                }
-            }
-
-            _ => return notice_page(format!("Invalid query: {}", query_string)),
         }
     }
 

@@ -121,7 +121,7 @@ fn handle_request(_db: &mut Database, _req: String) -> Vec<u8> {
 
     let mut result:Vec<u8> = Vec::from(header.as_bytes());
     result = [result, Vec::from(html.as_bytes())].concat();
-    
+
     return result;
 }
 

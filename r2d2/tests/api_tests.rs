@@ -4,31 +4,55 @@ use std::time::Duration;
 
 #[cfg(test)]
 mod api_tests {
+    use std::error::Error;
+    use std::fs::File;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{SocketAddr, TcpStream};
     use super::*;
 
     // Helper function to make HTTP GET requests
-    fn make_request(endpoint: &str) -> Result<String, Box<dyn std::error::Error>> {
+    fn make_request(endpoint: &str) -> Result<String, Box<dyn Error>> {
         let url = format!("http://127.0.0.1:6969/{}", endpoint);
+        let addr: SocketAddr = "127.0.0.1:6969".parse()?;
         let mut response = String::new();
-        
-        // Simple HTTP client implementation
-        let mut stream = std::net::TcpStream::connect("127.0.0.1:6969")?;
+
+        // Connect with a 5-second timeout
+        let stream = match TcpStream::connect_timeout(&addr, Duration::from_secs(5)) {
+            Ok(stream) => stream,
+            Err(e) => return Err(Box::new(e)),
+        };
+        let mut stream = stream;
+
+        // Set a read timeout (optional, but recommended for incomplete reads)
+        stream.set_read_timeout(Some(Duration::from_secs(1))).ok();
+
         let request = format!("GET /{} HTTP/1.1\r\nHost: 127.0.0.1:6969\r\nConnection: close\r\n\r\n", endpoint);
-        
-        std::io::Write::write_all(&mut stream, request.as_bytes())?;
-        stream.read_to_string(&mut response)?;
-        
-        // Extract the body from the HTTP response
-        if let Some(body_start) = response.find("\r\n\r\n") {
-            Ok(response[body_start + 4..].to_string())
-        } else {
-            Ok(response)
+        stream.write_all(request.as_bytes())?;
+
+        match stream.read_to_string(&mut response) {
+            Ok(_) => {
+                if let Some(body_start) = response.find("\r\n\r\n") {
+                    Ok(response[body_start + 4..].to_string())
+                } else {
+                    Ok(response)
+                }
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::TimedOut {
+                    Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Request timed out after 1 second",
+                    )))
+                } else {
+                    Err(Box::new(e))
+                }
+            }
         }
     }
 
     // Helper function to wait for server startup
     fn clear_and_wait_for_server() {
-        for _ in 0..50 {
+        for _ in 0..5 {
             if make_request("TIME::2024-01-01%2000:00:00").is_ok() {
                 let response = make_request("REMOVE::ALL");
                 assert!(response.is_ok());
@@ -44,11 +68,11 @@ mod api_tests {
 
     fn test_api_server_connection() {
         clear_and_wait_for_server();
-        
+
         // Test basic connection with LIST::ALL
         let response = make_request("LIST::ALL::HIDE");
         assert!(response.is_ok());
-        
+
         let content = response.unwrap();
         assert!(content.contains("Success") || content.contains("rows") || content.len() > 0);
     }
@@ -58,7 +82,7 @@ mod api_tests {
 
         // Use a specific timestamp for testing
         let timestamp = 1733697225084u128;
-        
+
         // Insert a document via API
         let insert_endpoint = format!("INSERT::store=1,product=101,number_sold=5::TIMESTAMP={}::HIDE", timestamp);
         let response = make_request(&insert_endpoint);
@@ -78,7 +102,7 @@ mod api_tests {
         clear_and_wait_for_server();
 
         let base_time = 1733697226000u128;
-        
+
         // Insert multiple documents with sequential timestamps
         for i in 0..10 {
             let timestamp = base_time + i as u128;
@@ -105,7 +129,7 @@ mod api_tests {
         clear_and_wait_for_server();
 
         let base_time = 0u128;
-        
+
         // Insert test data
         for i in 1..6 {
             let timestamp = base_time + i as u128;
@@ -180,7 +204,7 @@ mod api_tests {
         // Test TIME endpoint
         let time_response = make_request("TIME::2024-12-07%2011:15:10");
         assert!(time_response.is_ok());
-        
+
         let time_content = time_response.unwrap();
         // Should return the timestamp as a number
         assert!(time_content.contains("1733570110000") || time_content.chars().any(|c| c.is_numeric()));
@@ -192,7 +216,7 @@ mod api_tests {
         // Test LIST::METADATA
         let metadata_response = make_request("LIST::METADATA");
         assert!(metadata_response.is_ok());
-        
+
         let metadata_content = metadata_response.unwrap();
         assert!(metadata_content.len() > 0);
     }
@@ -229,18 +253,101 @@ mod api_tests {
             assert!(!content.contains("999") || content.trim().is_empty());
         }
     }
-    
+
+    fn test_api_load_schema() {
+        clear_and_wait_for_server();
+
+        let mut response = make_request("LOAD::SCHEMA::test.schema.r2d2");
+        assert!(response.is_ok());
+
+        let mut content = response.unwrap();
+        assert!(content.to_ascii_lowercase().contains("successfully loaded schema"));
+
+        response = make_request("LIST::ALL");
+        assert!(response.is_ok());
+
+        content = response.unwrap();
+
+        let schema_file = File::open("data/test.schema.r2d2").unwrap();
+        let schema_reader = BufReader::new(schema_file);
+        for line in schema_reader.lines() {
+            let line = line.unwrap();
+            let column_name = line.split(',').next().unwrap();
+            assert!(content.contains(&column_name));
+        }
+    }
+
+    fn test_api_load_schema_edge_cases() {
+        clear_and_wait_for_server();
+
+
+        // Incorrect formatting
+        let mut response = make_request("LOAD::SCHEMA::test_bad.schema.r2d2");
+        assert!(response.is_ok());
+
+        let mut content = response.unwrap();
+        assert!(content.to_ascii_lowercase().contains("error"));
+
+
+        // Empty schema & extra period in file extension
+        response = make_request("LOAD::SCHEMA::test.empty.schema.r2d2");
+        assert!(response.is_ok());
+
+        content = response.unwrap();
+        assert!(content.to_ascii_lowercase().contains("error"));
+
+
+        // Column name and type collisions
+        response = make_request("LOAD::SCHEMA::test_collisions.schema.r2d2");
+        assert!(response.is_ok());
+
+        content = response.unwrap();
+        assert!(content.to_ascii_lowercase().contains("error"));
+
+
+        // Massive label lengths
+        response = make_request("LOAD::SCHEMA::test_label_length.schema.r2d2");
+        assert!(response.is_ok());
+
+        content = response.unwrap();
+        assert!(content.to_ascii_lowercase().contains("successfully loaded schema"));
+
+        response = make_request("LIST::ALL");
+        assert!(response.is_ok());
+
+        content = response.unwrap();
+
+        let label_length_schema_file = File::open("data/test_label_length.schema.r2d2").unwrap();
+        let label_length_schema_reader = BufReader::new(label_length_schema_file);
+        for line in label_length_schema_reader.lines() {
+            let line = line.unwrap();
+            let column_name = line.split(',').next().unwrap();
+            assert!(!content.contains(&column_name));
+        }
+
+
+        // Large number of columns
+        response = make_request("LOAD::SCHEMA::test_size.schema.r2d2");
+        assert!(response.is_ok());
+
+        content = response.unwrap();
+        assert!(content.to_ascii_lowercase().contains("error"));
+    }
+
     // API tests have to be run sequentially because they expect a certain ordering
     // of execution. That is why they are all called one-by-one within the following test
-    // (Rust tests are run in parallel by default)
+    // (Rust tests are run in parallel by default). This is kind of unavoidable, unfortunately,
+    // due to the nature of how my database is designed.
     #[test]
     fn api_tests_main() {
+
+        // P2P unit tests
         test_api_server_connection();
         println!("✓ Passed connection testing (\"test_api_server_connection\")");
-        
+
         test_api_insert_and_get_one();
         println!("✓ Passed single insert with retrieval (\"test_api_insert_and_get_one\")");
-        
+
         test_api_get_range();
         println!("✓ Passed retrieval over range (\"test_api_get_range\")");
 
@@ -258,5 +365,13 @@ mod api_tests {
 
         test_api_remove_operation();
         println!("✓ Passed data removal testing (\"test_api_remove_operation\")");
+
+
+        // New unit tests
+        test_api_load_schema();
+        println!("✓ Passed schema loading testing (\"test_api_server_connection\")");
+
+        test_api_load_schema_edge_cases();
+        println!("✓ Passed schema loading edge-case testing (\"test_api_server_connection\")");
     }
 }
